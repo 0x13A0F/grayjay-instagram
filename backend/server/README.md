@@ -58,9 +58,12 @@ This starts **two** services:
 - `ig-camoufox` — the backend on **:8000**, plus the **noVNC login UI** on
   **:6080** (build context `./backend/server`).
 - `ig-plugin` — builds `./plugin`, runs `configure.py` (bakes the `.env` values
-  into the plugin, incl. `allowUrls`) and http-serves it on **:8080**.
+  into the plugin, incl. `allowUrls`) and http-serves it on **:8080**, incl. a
+  QR install page.
 
-Install the plugin in Grayjay from `http://<host>:8080/InstagramConfig.json`.
+Open `http://<host>:8080/` and **scan the QR code** in Grayjay (Settings →
+Plugins → Add → Scan QR code) — or install directly from
+`http://<host>:8080/InstagramConfig.json`.
 ```bash
 curl http://localhost:8000/health
 # {"status":"ok","ready":false,"needs_login":true}  -> log in (below)
@@ -104,8 +107,8 @@ profile transfer, no `docker compose run`, no ENTER.
    (Only the host side moves; the containers still listen on 8000/8080/6080.)
 3. **Deploy.** Dokploy runs `docker compose up -d --build` — no manual commands.
 4. Open **`http://<server-ip>:<IG_VNC_PORT>/vnc.html`** and log in once (step
-   above). The backend serves automatically; add the plugin in Grayjay from
-   `IG_SOURCE_URL`.
+   above). The backend serves automatically; open `http://<server-ip>:<IG_PLUGIN_PORT>/`
+   and scan the QR code in Grayjay to install.
 
 Redeploys (git push → Redeploy) reuse the `ig-profile` volume, so you stay
 logged in.

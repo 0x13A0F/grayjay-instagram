@@ -1,0 +1,3 @@
+# SVG QR-code generation for the install page (configure.py). No image-lib
+# extra ([pil]) needed - SvgPathImage renders pure SVG, no Pillow dependency.
+qrcode>=7.4,<8

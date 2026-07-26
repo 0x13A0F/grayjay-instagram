@@ -12,18 +12,23 @@ Env:
     IG_SOURCE_URL  optional   where you serve the config (sets sourceUrl, used
                               by Grayjay for plugin auto-updates)
 
-Writes ./dist/{InstagramScript.js, InstagramConfig.json, icon.png}. Serve
-./dist and load <host>/InstagramConfig.json in Grayjay.
+Writes ./dist/{InstagramScript.js, InstagramConfig.json, icon.png, qr.svg,
+index.html}. Serve ./dist - load <host>/InstagramConfig.json in Grayjay
+directly, or open <host>/ for a page with a QR code to scan instead.
 
     IG_API_BASE=https://ig.example.com IG_API_KEY=... python3 configure.py
 """
 
+import html
 import json
 import os
 import re
 import shutil
 import sys
 from urllib.parse import urlparse
+
+import qrcode
+import qrcode.image.svg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 api_base = (os.getenv("IG_API_BASE") or "").rstrip("/")
@@ -67,8 +72,27 @@ icon = os.path.join(HERE, "icon.png")
 if os.path.exists(icon):
     shutil.copy(icon, os.path.join(out, "icon.png"))
 
+# --- install page: QR code (scan in Grayjay) + the same URL as text ----------
+install_url = cfg["sourceUrl"]
+qr_img = qrcode.make(install_url, image_factory=qrcode.image.svg.SvgPathImage)
+qr_img.save(os.path.join(out, "qr.svg"))
+
+warning_html = ""
+if not source_url:
+    warning_html = (
+        '<div class="warning">IG_SOURCE_URL was not set at build time - this '
+        "QR code points at a placeholder URL, not your server. Set "
+        "IG_SOURCE_URL and rebuild.</div>"
+    )
+page = open(os.path.join(HERE, "index.html")).read()
+page = page.replace("{{SOURCE_URL}}", html.escape(install_url))
+page = page.replace("{{WARNING_HTML}}", warning_html)
+with open(os.path.join(out, "index.html"), "w") as f:
+    f.write(page)
+
 print(f"wrote dist/ for backend {api_base} "
       f"(API key {'set' if api_key else 'EMPTY'})")
 print(f"  allowUrls = {cfg['allowUrls']}")
+print(f"  install page + QR -> {install_url}")
 if not source_url:
     print("  note: sourceUrl left as-is (set IG_SOURCE_URL to change it)")
