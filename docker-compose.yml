@@ -1,0 +1,57 @@
+# One-command stack: the Camoufox backend + the Grayjay plugin server.
+# Lives at the repo root so every build context is a sub-folder (./backend/server,
+# ./plugin) — nothing escapes, which is what git-based deploy tools expect.
+#
+#   docker compose up -d --build
+#
+# Config via a .env next to this file (gitignored):
+#   IG_API_KEY      shared secret (backend auth + plugin). Unset = open mode.
+#   IG_API_BASE     PUBLIC backend URL the plugin reaches (LAN IP or VPS domain)
+#   IG_SOURCE_URL   where the plugin config is served (for Grayjay auto-updates)
+#   VNC_PASS        password for the noVNC login UI (recommended)
+#   IG_API_PORT     host port for the backend API   (default 8000)
+#   IG_PLUGIN_PORT  host port for the plugin server (default 8080)
+#   IG_VNC_PORT     host port for the noVNC login   (default 6080)
+# On a shared host, set the *_PORT vars to free ports and point IG_API_BASE /
+# IG_SOURCE_URL at those same ports.
+#
+# First run has no Instagram session: open http://<host>:<IG_VNC_PORT>/vnc.html,
+# log in, and the backend auto-detects the session and serves (no shell/TTY).
+services:
+  ig-camoufox:
+    build:
+      context: ./backend/server
+    container_name: ig-camoufox
+    ports:
+      # HOST:container. Only the host side is configurable - change it (e.g. on
+      # a shared box where 8000/6080 are taken) without touching the app.
+      - "${IG_API_PORT:-8000}:8000"   # REST API (guard with IG_API_KEY)
+      - "${IG_VNC_PORT:-6080}:6080"   # noVNC login UI -> /vnc.html
+    volumes:
+      # Holds the logged-in session AND the pinned fingerprint - persists it.
+      - ./backend/server/ig-profile:/data/profile
+    environment:
+      - CAMOUFOX_PROFILE_DIR=/data/profile
+      - CAMOUFOX_HEADLESS=false   # headful on :0 so the login is viewable
+      - DISPLAY=:0
+      - IG_API_KEY=${IG_API_KEY:-}
+      - VNC_PASS=${VNC_PASS:-}     # protect the noVNC login UI (recommended)
+    shm_size: "1gb"            # headroom for the browser
+    restart: unless-stopped
+
+  # Builds the plugin into an image (no bind mount), runs configure.py to bake
+  # the env into ./dist, then http-serves it. Grayjay installs from
+  # http://<host>:8080/InstagramConfig.json
+  plugin:
+    build:
+      context: ./plugin
+    container_name: ig-plugin
+    environment:
+      # IG_API_BASE = the PUBLIC backend URL the plugin (in Grayjay) reaches -
+      # NOT a docker service name. Defaults suit same-host local testing.
+      - IG_API_BASE=${IG_API_BASE:-http://localhost:8000}
+      - IG_API_KEY=${IG_API_KEY:-}
+      - IG_SOURCE_URL=${IG_SOURCE_URL:-http://localhost:8080/InstagramConfig.json}
+    ports:
+      - "${IG_PLUGIN_PORT:-8080}:8080"   # host side configurable
+    restart: unless-stopped

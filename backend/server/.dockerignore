@@ -1,0 +1,7 @@
+.venv/
+ig-profile/
+ig-dumps/
+__pycache__/
+*.log
+.DS_Store
+README.md
