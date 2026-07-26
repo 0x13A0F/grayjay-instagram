@@ -1,0 +1,38 @@
+{
+    "name": "Instagram",
+    "platformUrl": "https://www.instagram.com",
+    "description": "Browse Instagram creators and Reels through a self-hosted real-browser backend. No third-party login.",
+    "author": "0x13A0F",
+    "authorUrl": "https://github.com/0x13A0F/grayjay-instagram",
+    "sourceUrl": "http://192.168.1.10:8080/InstagramConfig.json",
+    "repositoryUrl": "https://github.com/0x13A0F/grayjay-instagram",
+    "scriptUrl": "./InstagramScript.js",
+    "version": 6,
+    "iconUrl": "./icon.png",
+    "id": "f22cd149-a75e-4486-9ccd-92f611beca61",
+    "packages": [
+        "Http",
+        "Utilities",
+        "DOMParser"
+    ],
+    "allowEval": false,
+    "allowAllHttpHeaderAccess": false,
+    "allowUrls": [
+        "192.168.1.10",
+        "192.168.1.10:8000",
+        "192.168.1.10:8080",
+        "instagram.com",
+        ".instagram.com",
+        ".cdninstagram.com",
+        ".fbcdn.net"
+    ],
+    "settings": [
+        {
+            "variable": "fetchReplies",
+            "name": "Load comment replies",
+            "description": "Fetch full reply threads on demand. Adds one request each time you expand a comment's replies. When off, only the few replies Instagram includes for free are shown.",
+            "type": "Boolean",
+            "default": "false"
+        }
+    ]
+}
