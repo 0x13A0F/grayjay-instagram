@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+.DS_Store
+.claude/
+TODO.md
+
+# Secrets (the backend API key) — never commit.
+.env
+**/.env
+
+# Generated, deployment-specific plugin (configure.py bakes in the API key).
+plugin/dist/
+
+# Logged-in browser profile (holds the Instagram session) — never commit.
+ig-profile/
+backend/server/ig-profile/
+
+# Captured raw IG responses (contain real account data) — never commit.
+ig-dumps/
+backend/server/ig-dumps/

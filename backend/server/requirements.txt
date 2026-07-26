@@ -1,0 +1,9 @@
+# Official camoufox (not the cloverlabs fork): it CAPS playwright<1.61, which
+# avoids the `Browser.setDefaultViewport ... isMobile not in scheme` crash that
+# a newer playwright (>=1.61) causes against the pinned Camoufox browser.
+# Keep camoufox + playwright pinned together so the browser's juggler protocol
+# always matches the client. Bump both deliberately, then re-login.
+camoufox==0.5.4
+playwright==1.60.0
+fastapi
+uvicorn[standard]
