@@ -31,8 +31,11 @@ docker compose up -d --build
 This builds and runs **both** pieces — the backend (`:8000`, plus a **noVNC**
 login UI on `:6080`) and the plugin server (`:8080`). Open
 `http://<host>:6080/vnc.html` once to log in to Instagram (the backend
-auto-detects the session and starts serving); then load
-`http://<host>:8080/InstagramConfig.json` in Grayjay.
+auto-detects the session and starts serving); then open `http://<host>:8080/`
+and **scan the QR code** in Grayjay (or load `InstagramConfig.json` from that
+same URL directly):
+
+<img src="plugin/qrcode_example.png" alt="Plugin install page with a scannable QR code" width="320">
 
 Full details — including deploying on [Dokploy](https://dokploy.com) straight
 from git (no shell access needed) — in

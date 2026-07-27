@@ -58,9 +58,15 @@ This starts **two** services:
 - `ig-camoufox` — the backend on **:8000**, plus the **noVNC login UI** on
   **:6080** (build context `./backend/server`).
 - `ig-plugin` — builds `./plugin`, runs `configure.py` (bakes the `.env` values
-  into the plugin, incl. `allowUrls`) and http-serves it on **:8080**.
+  into the plugin, incl. `allowUrls`) and http-serves it on **:8080**, incl. a
+  QR install page.
 
-Install the plugin in Grayjay from `http://<host>:8080/InstagramConfig.json`.
+Open `http://<host>:8080/` and **scan the QR code** in Grayjay (Settings →
+Plugins → Add → Scan QR code) — or install directly from
+`http://<host>:8080/InstagramConfig.json`.
+
+<img src="../../plugin/qrcode_example.png" alt="Plugin install page with a scannable QR code" width="320">
+
 ```bash
 curl http://localhost:8000/health
 # {"status":"ok","ready":false,"needs_login":true}  -> log in (below)
@@ -78,10 +84,18 @@ the Instagram login page and `/health` reports `needs_login:true`. Just:
    cookie), navigates home, and starts serving. `/health` flips to
    `ready:true`. Nothing to press; the **same** browser now serves requests.
 
-The session + the pinned fingerprint are written into the mounted `ig-profile/`
-volume, so they survive restarts. To **re-login** later (session expired), open
-the same noVNC URL and log in again — the backend notices and resumes. No
-profile transfer, no `docker compose run`, no ENTER.
+The session + the pinned fingerprint are written into the **named Docker
+volume** `ig-profile` (declared in `docker-compose.yml`), so they survive
+container restarts, rebuilds, **and redeploys** - it's owned by Docker, not
+the git checkout, so tools that `rm -rf` and re-clone the repo on every
+deploy (Dokploy included) don't touch it. To **re-login** later (session
+expired), open the same noVNC URL and log in again — the backend notices and
+resumes. No profile transfer, no `docker compose run`, no ENTER.
+
+> Only `docker compose down -v` (the `-v`) or `docker volume rm` deletes this
+> volume - a plain redeploy or `down`/`up` never does. To force a fresh login,
+> remove it deliberately: `docker compose down && docker volume rm
+> <project>_ig-profile` (find the exact name with `docker volume ls`).
 
 > **Protect :6080** — whoever opens it can drive your logged-in Instagram. Set
 > `VNC_PASS` (adds a noVNC password) and/or firewall the port to your IP. On a
@@ -104,8 +118,8 @@ profile transfer, no `docker compose run`, no ENTER.
    (Only the host side moves; the containers still listen on 8000/8080/6080.)
 3. **Deploy.** Dokploy runs `docker compose up -d --build` — no manual commands.
 4. Open **`http://<server-ip>:<IG_VNC_PORT>/vnc.html`** and log in once (step
-   above). The backend serves automatically; add the plugin in Grayjay from
-   `IG_SOURCE_URL`.
+   above). The backend serves automatically; open `http://<server-ip>:<IG_PLUGIN_PORT>/`
+   and scan the QR code in Grayjay to install.
 
 Redeploys (git push → Redeploy) reuse the `ig-profile` volume, so you stay
 logged in.
@@ -114,6 +128,45 @@ logged in.
 > service a **domain** in Dokploy (Traefik routes by hostname, adds HTTPS, no
 > port clashes). Add a basic-auth middleware to the noVNC one. Then the `*_PORT`
 > vars don't matter — Traefik reaches the containers over the compose network.
+
+## Signing the plugin (optional)
+
+Without a signature, Grayjay installs the plugin fine but shows a **missing
+signature** notice, since it can't verify who published it. Fixing that means
+giving the plugin container an RSA private key at build time — the `plugin`
+service signs the *actual deployed* script with it every time it starts
+(RSA-SHA512, the same scheme as Grayjay's own `scriptSignature` /
+`scriptPublicKey` fields), so signing has to happen after `IG_API_BASE`/
+`IG_API_KEY` are baked in, not once in the repo. Generate a key once (any
+RSA key works — a fresh one or an existing `~/.ssh/id_rsa`; both the
+traditional PEM and modern OpenSSH private-key formats are supported):
+
+```bash
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa_grayjay -N ""   # keep the private key
+```
+
+Then give it to the container **either** way (only one is needed):
+
+- **As an env var (`IG_SIGN_KEY_B64`)** — no volume mount, so it works from a
+  UI-only host like Dokploy with no shell/file access:
+  ```bash
+  base64 -w0 ~/.ssh/id_rsa_grayjay          # Linux
+  base64 -i ~/.ssh/id_rsa_grayjay | tr -d '\n'   # macOS (no -w flag)
+  ```
+  Paste the single-line output as `IG_SIGN_KEY_B64` in `.env` (or Dokploy's
+  Environment box). Base64 avoids every multi-line-value pitfall (`.env`
+  parsing, UI textareas, YAML, shell quoting all choke on a raw multi-line PEM).
+- **As a mounted file (`IG_SIGN_KEY_PATH`)** — if you do have host/file
+  access: uncomment the `volumes:` line under the `plugin` service in
+  `docker-compose.yml` (mounts the key **read-only**), then set
+  `IG_SIGN_KEY_PATH=/keys/id_rsa` in `.env` (the **in-container** path from
+  that mount, not a path on your host).
+
+Either way, rebuild (`docker compose up -d --build`). The private key never
+leaves your server and isn't baked into the image; only set one of these if
+you want the notice gone. Re-installing after re-signing (e.g. you rotated
+the key) requires removing and re-adding the plugin in Grayjay, since it pins
+the public key it first saw.
 
 ## Notes / limits
 - **Heavy/slow**: a browser is hundreds of MB and seconds per call; requests
@@ -129,4 +182,7 @@ logged in.
   login); `CAMOUFOX_FP_OS` (default `macos`) sets the OS family on first roll.
 - **Self-healing**: if the browser/page transport dies, the next request
   relaunches Camoufox and retries once — a crash recovers instead of wedging.
-- **`ig-profile/` holds your session — gitignored. Never commit it.**
+- **`ig-profile` (Docker volume) holds your session and fingerprint.** Not a
+  git-tracked path, so there's nothing to accidentally commit. To inspect or
+  back it up: `docker run --rm -v <project>_ig-profile:/data -v "$PWD":/backup
+  busybox tar czf /backup/ig-profile.tar.gz -C /data .`

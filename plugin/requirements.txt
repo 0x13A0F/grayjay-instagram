@@ -1,0 +1,7 @@
+# SVG QR-code generation for the install page (configure.py). No image-lib
+# extra ([pil]) needed - SvgPathImage renders pure SVG, no Pillow dependency.
+qrcode>=7.4,<8
+
+# RSA-SHA512 script signing (configure.py), matching Grayjay's own
+# scriptSignature/scriptPublicKey scheme - see "Script signing" in its docs.
+cryptography>=42,<47

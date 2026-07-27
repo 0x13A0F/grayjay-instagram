@@ -15,6 +15,15 @@
 # On a shared host, set the *_PORT vars to free ports and point IG_API_BASE /
 # IG_SOURCE_URL at those same ports.
 #
+# Optional: sign the plugin script (removes Grayjay's "missing signature"
+# notice). Two ways to give it your PEM private key - only one is needed:
+#   IG_SIGN_KEY_B64    the key, base64-encoded to one line - just an env var,
+#                      pastes straight into Dokploy's UI, no volume needed.
+#   IG_SIGN_KEY_PATH   OR mount the raw key as a file (uncomment the volume
+#                      below the `plugin` service) and point this at it.
+#   IG_SIGN_KEY_PASSPHRASE  only if that key is encrypted
+# See backend/server/README.md ("Signing the plugin") for how to generate one.
+#
 # First run has no Instagram session: open http://<host>:<IG_VNC_PORT>/vnc.html,
 # log in, and the backend auto-detects the session and serves (no shell/TTY).
 services:
@@ -28,8 +37,13 @@ services:
       - "${IG_API_PORT:-8000}:8000"   # REST API (guard with IG_API_KEY)
       - "${IG_VNC_PORT:-6080}:6080"   # noVNC login UI -> /vnc.html
     volumes:
-      # Holds the logged-in session AND the pinned fingerprint - persists it.
-      - ./backend/server/ig-profile:/data/profile
+      # NAMED volume (not a bind mount into ./backend/server/) - holds the
+      # logged-in session AND the pinned fingerprint. Git-based deploy tools
+      # (Dokploy included) `rm -rf` and re-clone the checkout dir on every
+      # redeploy; a bind mount living inside it would get wiped (silently
+      # replaced by an empty dir) and log you out every time. A named volume
+      # is owned by the Docker daemon, outside the checkout, so it survives.
+      - ig-profile:/data/profile
     environment:
       - CAMOUFOX_PROFILE_DIR=/data/profile
       - CAMOUFOX_HEADLESS=false   # headful on :0 so the login is viewable
@@ -52,6 +66,16 @@ services:
       - IG_API_BASE=${IG_API_BASE:-http://localhost:8000}
       - IG_API_KEY=${IG_API_KEY:-}
       - IG_SOURCE_URL=${IG_SOURCE_URL:-http://localhost:8080/InstagramConfig.json}
+      - IG_SIGN_KEY_B64=${IG_SIGN_KEY_B64:-}
+      - IG_SIGN_KEY_PATH=${IG_SIGN_KEY_PATH:-}
+      - IG_SIGN_KEY_PASSPHRASE=${IG_SIGN_KEY_PASSPHRASE:-}
+    # volumes:
+    #   # File-mount alternative to IG_SIGN_KEY_B64 - mount your PEM private
+    #   # key read-only at the path IG_SIGN_KEY_PATH points to (see above).
+    #   - ~/.ssh/id_rsa_grayjay:/keys/id_rsa:ro
     ports:
       - "${IG_PLUGIN_PORT:-8080}:8080"   # host side configurable
     restart: unless-stopped
+
+volumes:
+  ig-profile:
