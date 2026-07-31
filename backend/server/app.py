@@ -21,7 +21,8 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+import cache
 from browser import IGError, browser
 from utils import pk_str, shortcode_to_pk
 
@@ -57,9 +58,51 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await browser.stop()
+        await cache.close()
 
 
 app = FastAPI(title="Instagram (Camoufox) backend", lifespan=lifespan)
+
+
+# Response cache. Registered BEFORE require_api_key so that - since Starlette
+# runs the last-registered middleware first - the API-key gate stays OUTERMOST
+# and an unauthenticated request can never read from the cache.
+@app.middleware("http")
+async def cache_responses(request: Request, call_next):
+    # Only cache idempotent GETs; never /health. TTL is driven by the plugin
+    # via X-Cache-TTL (seconds); absent/0/invalid -> bypass entirely.
+    if request.method != "GET" or request.url.path in _OPEN_PATHS:
+        return await call_next(request)
+    raw_ttl = request.headers.get("x-cache-ttl", "")
+    try:
+        requested = int(raw_ttl) if raw_ttl else cache.CACHE_DEFAULT_TTL
+    except ValueError:
+        requested = cache.CACHE_DEFAULT_TTL
+    ttl = cache.clamp_ttl(requested)
+    if ttl <= 0:
+        return await call_next(request)
+
+    target = f"{request.url.path}?{request.url.query}" if request.url.query \
+        else request.url.path
+    key = cache.make_key(request.method, request.url.path, request.url.query)
+    hit = await cache.get(key)
+    if hit is not None:
+        print(f"cache HIT: {target}")
+        return Response(content=hit, media_type="application/json",
+                        headers={"X-Cache": "HIT"})
+
+    response = await call_next(request)
+    # Cache only successful JSON; errors (rate-limit walls, 404s, 422s) must
+    # not get pinned. Draining body_iterator means we must rebuild the response.
+    if response.status_code == 200:
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        await cache.set(key, body, ttl)
+        print(f"cache MISS: {target} (cached for {ttl}s)")
+        headers = dict(response.headers)
+        headers.pop("content-length", None)  # recomputed from the new body
+        headers["X-Cache"] = "MISS"
+        return Response(content=body, status_code=200, headers=headers)
+    return response
 
 
 @app.middleware("http")

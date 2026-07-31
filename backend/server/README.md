@@ -15,8 +15,9 @@ plugin ──:8000──> FastAPI ──> one logged-in Camoufox page
 ## Files
 | File | Role |
 |---|---|
-| `app.py` | FastAPI routes (`/health`, `/search/users`, `/search/reels`, `/user`, `/feed`, `/saved/collections`, `/saved/reels`, `/user/reels`, `/media`, `/media/comments`, `/media/comments/replies`) |
+| `app.py` | FastAPI routes (`/health`, `/search/users`, `/search/reels`, `/user`, `/feed`, `/saved/collections`, `/saved/reels`, `/user/reels`, `/media`, `/media/comments`, `/media/comments/replies`) + the auth + response-cache middleware |
 | `browser.py` | Camoufox manager + `ig_fetch()` (in-page fetch) + serialization lock + integrated login detection + self-heal on crash |
+| `cache.py` | best-effort Redis response cache (see **Caching**) — key builder + safe get/set that never breaks a request |
 | `normalize.py` | Instagram JSON → the shapes the plugin reads |
 | `utils.py` | shared stateless helpers (incl. reel shortcode → media pk codec) |
 | `fingerprint.py` | pins one real Camoufox fingerprint preset (persisted in the profile) so login + serving + restarts share the same identity |
@@ -54,12 +55,13 @@ EOF
 ```bash
 docker compose up -d --build        # from the repo root
 ```
-This starts **two** services:
+This starts **three** services:
 - `ig-camoufox` — the backend on **:8000**, plus the **noVNC login UI** on
   **:6080** (build context `./backend/server`).
 - `ig-plugin` — builds `./plugin`, runs `configure.py` (bakes the `.env` values
   into the plugin, incl. `allowUrls`) and http-serves it on **:8080**, incl. a
   QR install page.
+- `redis` — the response cache (internal only; see **Caching** below).
 
 Open `http://<host>:8080/` and **scan the QR code** in Grayjay (Settings →
 Plugins → Add → Scan QR code) — or install directly from
@@ -168,9 +170,32 @@ you want the notice gone. Re-installing after re-signing (e.g. you rotated
 the key) requires removing and re-adding the plugin in Grayjay, since it pins
 the public key it first saw.
 
+## Caching
+
+The `redis` service caches successful responses so Grayjay's constant repeat
+requests (flipping pages, re-opening a channel, re-running a search) are served
+instantly instead of driving the browser again — smoother navigation and far
+less Instagram rate-limiting.
+
+- **Duration is set in the plugin**, not here: the **"Cache duration"** setting
+  in Grayjay (Off / 1 / 3 / 5 / 10 min, default 3) is sent per request as an
+  `X-Cache-TTL` header; the backend caches that response for that long. `Off`
+  sends no header and nothing is cached.
+- Only `200` JSON is cached (keyed by method + path + query, so each page /
+  cursor is separate); errors and login walls never are.
+- `CACHE_MAX_TTL` (default 600s) caps whatever the plugin asks for.
+- **Fail-safe**: if Redis is down the backend just serves uncached — it never
+  errors or slows down, and caching resumes on its own when Redis returns.
+- Redis is internal (no published port), memory-capped (128 MB, LRU) and
+  disposable (no volume) — it's only a cache.
+
+Check it: responses carry an `X-Cache: HIT|MISS` header;
+`docker exec ig-redis redis-cli keys 'igcache*'` lists cached entries.
+
 ## Notes / limits
 - **Heavy/slow**: a browser is hundreds of MB and seconds per call; requests
-  are serialized (one page, one lock). No response caching yet (planned).
+  are serialized (one page, one lock). Repeat requests are absorbed by the
+  Redis cache (above).
 - **Single account**: rapid browsing of many creators' reels can temporarily
   rate-limit the `clips` endpoint (login wall); it recovers on its own.
 - **Pinned fingerprint**: the first login captures one real Camoufox

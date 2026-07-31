@@ -46,6 +46,12 @@ function apiGet(path, params) {
 
     const headers = { "Accept": "application/json" };
     if (API_KEY) headers["X-API-Key"] = API_KEY;
+    // Ask the backend to cache this response for a bit (see the "Cache
+    // duration" setting). Repeated identical requests - flipping pages,
+    // re-opening a channel - then come straight from Redis, so navigation is
+    // instant and Instagram is hit less. 0 / off -> header omitted (no cache).
+    const cacheTtl = cacheTtlSeconds();
+    if (cacheTtl > 0) headers["X-Cache-TTL"] = String(cacheTtl);
 
     // Retry transient backend errors (5xx / network blips) a few times.
     let lastMsg = "";
@@ -127,6 +133,32 @@ function newSessionId() {
 function repliesEnabled() {
     const v = plug_settings.fetchReplies;
     return v === true || v === "true";
+}
+
+// "Cache duration" setting -> seconds sent as X-Cache-TTL. Grayjay Dropdowns
+// hand back the selected option's INDEX (as a string); we also accept the
+// label itself, defensively, in case a build passes that instead. Keep this
+// list in sync with the "options" in InstagramConfig.json.
+const CACHE_OPTIONS = [
+    { label: "Off", seconds: 0 },
+    { label: "1 minute", seconds: 60 },
+    { label: "3 minutes", seconds: 180 },
+    { label: "5 minutes", seconds: 300 },
+    { label: "10 minutes", seconds: 600 },
+];
+const CACHE_DEFAULT_SECONDS = 180; // "3 minutes" - matches the setting default
+
+function cacheTtlSeconds() {
+    const raw = plug_settings.cacheDuration;
+    if (raw === undefined || raw === null || raw === "") return CACHE_DEFAULT_SECONDS;
+    for (const o of CACHE_OPTIONS) {           // exact label match first
+        if (raw === o.label) return o.seconds;
+    }
+    const idx = parseInt(raw, 10);             // otherwise treat it as an index
+    if (!isNaN(idx) && idx >= 0 && idx < CACHE_OPTIONS.length) {
+        return CACHE_OPTIONS[idx].seconds;
+    }
+    return CACHE_DEFAULT_SECONDS;
 }
 
 // =============================================================================

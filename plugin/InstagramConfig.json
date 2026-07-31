@@ -7,7 +7,7 @@
     "sourceUrl": "http://192.168.1.10:8080/InstagramConfig.json",
     "repositoryUrl": "https://github.com/0x13A0F/grayjay-instagram",
     "scriptUrl": "./InstagramScript.js",
-    "version": 6,
+    "version": 7,
     "iconUrl": "./icon.png",
     "id": "f22cd149-a75e-4486-9ccd-92f611beca61",
     "packages": [
@@ -33,6 +33,14 @@
             "description": "Fetch full reply threads on demand. Adds one request each time you expand a comment's replies. When off, only the few replies Instagram includes for free are shown.",
             "type": "Boolean",
             "default": "false"
+        },
+        {
+            "variable": "cacheDuration",
+            "name": "Cache duration",
+            "description": "Cache responses on the backend for this long so quickly re-opening pages is instant and Instagram is hit less (avoids rate-limits). Off = always fetch fresh.",
+            "type": "Dropdown",
+            "options": ["Off", "1 minute", "3 minutes", "5 minutes", "10 minutes"],
+            "default": "2"
         }
     ]
 }

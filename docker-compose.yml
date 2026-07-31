@@ -12,6 +12,8 @@
 #   IG_API_PORT     host port for the backend API   (default 8000)
 #   IG_PLUGIN_PORT  host port for the plugin server (default 8080)
 #   IG_VNC_PORT     host port for the noVNC login   (default 6080)
+#   CACHE_MAX_TTL   cap (seconds) on the plugin-requested cache TTL (default 600)
+#   CACHE_DEFAULT_TTL  cache TTL when a request sends no header (default 0=off)
 # On a shared host, set the *_PORT vars to free ports and point IG_API_BASE /
 # IG_SOURCE_URL at those same ports.
 #
@@ -37,12 +39,6 @@ services:
       - "${IG_API_PORT:-8000}:8000"   # REST API (guard with IG_API_KEY)
       - "${IG_VNC_PORT:-6080}:6080"   # noVNC login UI -> /vnc.html
     volumes:
-      # NAMED volume (not a bind mount into ./backend/server/) - holds the
-      # logged-in session AND the pinned fingerprint. Git-based deploy tools
-      # (Dokploy included) `rm -rf` and re-clone the checkout dir on every
-      # redeploy; a bind mount living inside it would get wiped (silently
-      # replaced by an empty dir) and log you out every time. A named volume
-      # is owned by the Docker daemon, outside the checkout, so it survives.
       - ig-profile:/data/profile
     environment:
       - CAMOUFOX_PROFILE_DIR=/data/profile
@@ -50,7 +46,29 @@ services:
       - DISPLAY=:0
       - IG_API_KEY=${IG_API_KEY:-}
       - VNC_PASS=${VNC_PASS:-}     # protect the noVNC login UI (recommended)
+      # Response cache (the `redis` service below). The TTL is driven per
+      # request by the plugin's "Cache duration" setting; these just cap it.
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_MAX_TTL=${CACHE_MAX_TTL:-600}
+      - CACHE_DEFAULT_TTL=${CACHE_DEFAULT_TTL:-0}
+    depends_on:
+      - redis
     shm_size: "1gb"            # headroom for the browser
+    restart: unless-stopped
+
+  # Short-lived response cache so quickly re-opening pages in Grayjay is instant
+  # and Instagram is hit far less (avoids rate-limits).
+  redis:
+    image: redis:7-alpine
+    container_name: ig-redis
+    command: ["redis-server", "--maxmemory", "128mb",
+              "--maxmemory-policy", "allkeys-lru",
+              "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   # Builds the plugin into an image (no bind mount), runs configure.py to bake

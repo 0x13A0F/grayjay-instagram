@@ -7,3 +7,5 @@ camoufox==0.5.4
 playwright==1.60.0
 fastapi
 uvicorn[standard]
+# Short-lived response cache (cache.py); ships the asyncio client used here.
+redis>=5,<6

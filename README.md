@@ -59,8 +59,9 @@ backend/server/  Camoufox + FastAPI backend (app.py, browser.py, …)
 ```
 
 ## Roadmap
-Planned next: **importing** your subscriptions & playlists, **playlist search**,
-and **server-side caching**.
+Planned next: **importing** your subscriptions & playlists and **playlist
+search**. (Server-side response caching is done — a Redis service with a
+plugin-configurable duration.)
 
 > Heads-up: it runs on a single Instagram account. Heavy, rapid browsing can
 > temporarily rate-limit some endpoints (e.g. the reels feed); they recover
