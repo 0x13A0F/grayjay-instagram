@@ -15,7 +15,7 @@ plugin ──:8000──> FastAPI ──> one logged-in Camoufox page
 ## Files
 | File | Role |
 |---|---|
-| `app.py` | FastAPI routes (`/health`, `/search/users`, `/search/reels`, `/user`, `/feed`, `/saved/collections`, `/saved/reels`, `/user/reels`, `/media`, `/media/comments`, `/media/comments/replies`) + the auth + response-cache middleware |
+| `app.py` | FastAPI routes (`/health`, `/search/users`, `/search/reels`, `/user`, `/feed`, `/following`, `/saved/collections`, `/saved/reels`, `/user/reels`, `/media`, `/media/comments`, `/media/comments/replies`) + the auth + response-cache middleware |
 | `browser.py` | Camoufox manager + `ig_fetch()` (in-page fetch) + serialization lock + integrated login detection + self-heal on crash |
 | `cache.py` | best-effort Redis response cache (see **Caching**) — key builder + safe get/set that never breaks a request |
 | `normalize.py` | Instagram JSON → the shapes the plugin reads |

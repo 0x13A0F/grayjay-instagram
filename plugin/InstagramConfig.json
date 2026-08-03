@@ -7,7 +7,7 @@
     "sourceUrl": "http://192.168.1.10:8080/InstagramConfig.json",
     "repositoryUrl": "https://github.com/0x13A0F/grayjay-instagram",
     "scriptUrl": "./InstagramScript.js",
-    "version": 7,
+    "version": 9,
     "iconUrl": "./icon.png",
     "id": "f22cd149-a75e-4486-9ccd-92f611beca61",
     "packages": [
@@ -26,6 +26,9 @@
         ".cdninstagram.com",
         ".fbcdn.net"
     ],
+    "authentication": {
+        "loginUrl": "http://192.168.1.10:8080/login.html"
+    },
     "settings": [
         {
             "variable": "fetchReplies",

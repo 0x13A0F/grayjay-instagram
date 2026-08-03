@@ -49,6 +49,10 @@ from git (no shell access needed) — in
 - **Reels/videos** playback.
 - **Comments**, including **replies** — reply *previews* come free; full reply
   threads are fetched on demand behind the **"Load comment replies"** setting.
+- **Import subscriptions** — in Grayjay, open the Instagram source's detail
+  page and tap **Login** once (a one-tap formality — see below), then
+  **Import Subscriptions** pulls in the accounts you follow as Grayjay
+  subscriptions.
 
 Posting/following on Instagram's side are out of scope.
 
@@ -59,9 +63,8 @@ backend/server/  Camoufox + FastAPI backend (app.py, browser.py, …)
 ```
 
 ## Roadmap
-Planned next: **importing** your subscriptions & playlists and **playlist
-search**. (Server-side response caching is done — a Redis service with a
-plugin-configurable duration.)
+Planned next: **importing** your playlists and **playlist search**.
+(Subscription import and server-side response caching are done.)
 
 > Heads-up: it runs on a single Instagram account. Heavy, rapid browsing can
 > temporarily rate-limit some endpoints (e.g. the reels feed); they recover

@@ -118,6 +118,9 @@ function apiGetCollections() {
 function apiGetSavedReels(collectionId, cursor) {
     return apiGet("/saved/reels", { collection_id: collectionId, cursor: cursor || "" }); // -> {items, next_cursor}
 }
+function apiGetFollowing(cursor) {
+    return apiGet("/following", { cursor: cursor || "" }); // -> {items:[UserShort], next_cursor}
+}
 
 // RFC4122-ish v4 id; ties a keyword search's pages to one session so the
 // backend's paginated GraphQL query stays consistent across pages.
@@ -656,4 +659,33 @@ source.getSubComments = function (comment) {
     try { replies = JSON.parse(ctx.repliesJson || "[]"); } catch (e) { replies = []; }
     const items = replies.map(function (c) { return toPlatformComment(contextUrl, ctx.mediaId, c); });
     return new CommentPager(items, false, {});
+};
+
+// =============================================================================
+// Import subscriptions
+// =============================================================================
+// Grayjay: Sources -> Instagram -> Import -> Subscriptions. Grayjay calls this,
+// gets back the channel URLs of everyone the logged-in account follows, then
+// resolves each and lets you pick which to import. (No Grayjay-side login is
+// required for this - the backend holds the Instagram session.) We page through
+// the backend's /following until it's exhausted, with a hard cap so an
+// enormous follow list can't loop forever. Runs synchronously; http.GET is
+// blocking in Grayjay, so a plain loop is fine here.
+source.getUserSubscriptions = function () {
+    const urls = [];
+    const seen = {};
+    let cursor = "";
+    for (let page = 0; page < 200; page++) {   // cap: 200 pages * 200 = 40k
+        const res = apiGetFollowing(cursor);
+        const items = (res && res.items) || [];
+        for (const u of items) {
+            if (u && u.username && !seen[u.username]) {
+                seen[u.username] = true;
+                urls.push(channelUrl(u.username));
+            }
+        }
+        cursor = (res && res.next_cursor) || "";
+        if (!cursor) break;
+    }
+    return urls;
 };

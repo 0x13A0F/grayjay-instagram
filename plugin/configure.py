@@ -26,8 +26,12 @@ Env:
     fine but shows a "missing signature" security notice.
 
 Writes ./dist/{InstagramScript.js, InstagramConfig.json, icon.png, qr.svg,
-index.html}. Serve ./dist - load <host>/InstagramConfig.json in Grayjay
-directly, or open <host>/ for a page with a QR code to scan instead.
+index.html, login.html}. Serve ./dist - load <host>/InstagramConfig.json in
+Grayjay directly, or open <host>/ for a page with a QR code to scan instead.
+login.html is a decoy page for Grayjay's native "Login" button (Source
+Detail screen, unlocks Import Subscriptions/Playlists) - this plugin's real
+Instagram session lives in the backend, so tapping Login just has to load
+that one page once; no credentials are collected there.
 
     IG_API_BASE=https://ig.example.com IG_API_KEY=... python3 configure.py
 """
@@ -139,6 +143,12 @@ cdn = [x for x in cfg.get("allowUrls", [])
 cfg["allowUrls"] = list(dict.fromkeys([parsed.netloc, parsed.hostname] + cdn))
 if source_url:
     cfg["sourceUrl"] = source_url
+# authentication.loginUrl: same origin as sourceUrl (this plugin server), not
+# the backend. Grayjay's login flow is a decoy - see login.html - so it just
+# needs to load SOMETHING; no real Instagram credentials touch it.
+plugin_origin = urlparse(cfg["sourceUrl"])
+login_url = f"{plugin_origin.scheme}://{plugin_origin.netloc}/login.html"
+cfg.setdefault("authentication", {})["loginUrl"] = login_url
 if script_signature:
     cfg["scriptSignature"] = script_signature
     cfg["scriptPublicKey"] = script_public_key
@@ -177,10 +187,14 @@ page = page.replace("{{WARNING_HTML}}", warning_html)
 with open(os.path.join(out, "index.html"), "w") as f:
     f.write(page)
 
+# --- login page: static, no templating needed (see login_url above) ---------
+shutil.copy(os.path.join(HERE, "login.html"), os.path.join(out, "login.html"))
+
 print(f"wrote dist/ for backend {api_base} "
       f"(API key {'set' if api_key else 'EMPTY'})")
 print(f"  allowUrls = {cfg['allowUrls']}")
 print(f"  install page + QR -> {grayjay_url}")
+print(f"  authentication.loginUrl -> {login_url}")
 if script_signature:
     print("  script signed (scriptSignature/scriptPublicKey set)")
 else:

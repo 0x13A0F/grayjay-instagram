@@ -10,6 +10,7 @@ Routes:
   GET /media?code=
   GET /media/comments?media_id=&amount=&cursor=
   GET /media/comments/replies?media_id=&comment_id=&cursor=
+  GET /following?cursor=                          (logged-in account's follows)
 """
 
 import normalize as N
@@ -34,6 +35,8 @@ _OPEN_PATHS = {"/health"}
 
 # username (lower) -> pk, to avoid re-resolving on every reels page.
 _pk_cache = {}
+# The logged-in viewer's own pk (from the ds_user_id cookie), resolved once.
+_viewer_pk_cache = {}
 
 # GraphQL doc_ids for keyword reel search (xdt_fbsearch__top_serp_graphql).
 # These ROTATE when Instagram updates its web app. If keyword search starts
@@ -169,12 +172,40 @@ async def _resolve_pk(username: str) -> str:
     return pk
 
 
+async def _viewer_pk() -> str:
+    """The logged-in account's own pk (cached). Raises if not logged in."""
+    pk = _viewer_pk_cache.get("pk")
+    if pk:
+        return pk
+    pk = await browser.viewer_id()
+    if not pk:
+        raise IGError(401, "not logged in (no ds_user_id cookie)")
+    _viewer_pk_cache["pk"] = pk
+    return pk
+
+
 @app.get("/health")
 async def health():
     # needs_login=True -> open noVNC (:6080 /vnc.html) and log in; serving
     # resumes automatically once the session is detected.
     return {"status": "ok", "ready": browser.ready,
             "needs_login": browser.needs_login}
+
+
+@app.get("/following")
+async def following(cursor: str = Query("")):
+    # The logged-in account's "following" list (one page). The plugin paginates
+    # through all pages to feed Grayjay's "Import subscriptions".
+    try:
+        pk = await _viewer_pk()
+        params = {"count": 200}
+        if cursor:
+            params["max_id"] = cursor
+        resp = await browser.ig_fetch(
+            f"/api/v1/friendships/{pk}/following/", params=params)
+        return N.norm_following_page(resp)
+    except IGError as e:
+        return _fail(e)
 
 
 @app.get("/search/users")

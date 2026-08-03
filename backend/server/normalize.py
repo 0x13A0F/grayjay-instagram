@@ -159,6 +159,14 @@ def norm_comment(c: Optional[Dict]) -> Dict:
 
 # ---- list / page helpers ---------------------------------------------------
 
+def norm_following_page(resp: Dict) -> Dict:
+    """friendships/{id}/following/ -> {items:[UserShort], next_cursor}. Used by
+    the plugin's getUserSubscriptions (Grayjay subscription import)."""
+    resp = resp or {}
+    items = [norm_user_short(u) for u in (resp.get("users") or [])]
+    return {"items": items, "next_cursor": resp.get("next_max_id") or ""}
+
+
 def norm_search_users(resp: Dict) -> List[Dict]:
     """fbsearch/account_serp -> [UserShort]. Entries in resp.users[] are the
     user objects directly; topsearch instead nests them under .user, so we

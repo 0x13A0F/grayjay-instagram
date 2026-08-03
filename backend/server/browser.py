@@ -184,6 +184,23 @@ class IGBrowser:
             for c in cookies
         )
 
+    async def viewer_id(self) -> str:
+        """The logged-in user's own pk, read from the ds_user_id cookie
+        (Instagram sets it on login). Empty string if not logged in. Used to
+        build /friendships/{id}/following/ for subscription import."""
+        if self.page is None:
+            return ""
+        async with self.lock:
+            try:
+                cookies = await self.page.context.cookies()
+            except Exception:
+                return ""
+        for c in cookies:
+            if (c.get("name") == "ds_user_id"
+                    and "instagram.com" in (c.get("domain") or "")):
+                return c.get("value") or ""
+        return ""
+
     def _ensure_login_watch(self):
         if self._login_task is None or self._login_task.done():
             self._login_task = asyncio.create_task(self._watch_login())
