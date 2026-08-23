@@ -207,8 +207,15 @@ async def _viewer_pk() -> str:
 async def health():
     # needs_login=True -> open noVNC (:6080 /vnc.html) and log in; serving
     # resumes automatically once the session is detected.
-    return {"status": "ok", "ready": browser.ready,
-            "needs_login": browser.needs_login}
+    #
+    # CORS: the noVNC login wrapper (vnc-login/login.html, served on :6080)
+    # polls this from a different origin to know when the login landed. Only
+    # these two booleans are exposed, and /health needs no API key anyway.
+    return JSONResponse(
+        content={"status": "ok", "ready": browser.ready,
+                 "needs_login": browser.needs_login},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
 
 
 @app.get("/following")

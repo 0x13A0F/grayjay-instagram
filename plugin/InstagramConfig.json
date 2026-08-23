@@ -7,7 +7,7 @@
     "sourceUrl": "http://192.168.1.10:8080/InstagramConfig.json",
     "repositoryUrl": "https://github.com/0x13A0F/grayjay-instagram",
     "scriptUrl": "./InstagramScript.js",
-    "version": 9,
+    "version": 11,
     "iconUrl": "./icon.png",
     "id": "f22cd149-a75e-4486-9ccd-92f611beca61",
     "packages": [
@@ -27,7 +27,8 @@
         ".fbcdn.net"
     ],
     "authentication": {
-        "loginUrl": "http://192.168.1.10:8080/login.html"
+        "loginUrl": "http://192.168.1.10:6080/login.html?api=http%3A%2F%2F192.168.1.10%3A8000",
+        "completionUrl": "http://192.168.1.10:6080/login-done.html?*"
     },
     "settings": [
         {
@@ -42,7 +43,13 @@
             "name": "Cache duration",
             "description": "Cache responses on the backend for this long so quickly re-opening pages is instant and Instagram is hit less (avoids rate-limits). Off = always fetch fresh.",
             "type": "Dropdown",
-            "options": ["Off", "1 minute", "3 minutes", "5 minutes", "10 minutes"],
+            "options": [
+                "Off",
+                "1 minute",
+                "3 minutes",
+                "5 minutes",
+                "10 minutes"
+            ],
             "default": "2"
         }
     ]

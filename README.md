@@ -30,12 +30,19 @@ docker compose up -d --build
 ```
 This builds and runs **both** pieces — the backend (`:8000`, plus a **noVNC**
 login UI on `:6080`) and the plugin server (`:8080`). Open
-`http://<host>:6080/vnc.html` once to log in to Instagram (the backend
-auto-detects the session and starts serving); then open `http://<host>:8080/`
-and **scan the QR code** in Grayjay (or load `InstagramConfig.json` from that
-same URL directly):
+`http://<host>:8080/` and **scan the QR code** in Grayjay (or load
+`InstagramConfig.json` from that same URL directly):
 
 <img src="plugin/qrcode_example.png" alt="Plugin install page with a scannable QR code" width="320">
+
+Then log in to Instagram **once**, either way:
+
+- **Phone only** — tap **Login** on the Instagram source in Grayjay. Its login
+  webview opens the backend's real browser over noVNC; log in there and the
+  screen closes itself once the session lands. Nothing else is needed.
+- **From a computer** — open `http://<host>:6080/vnc.html` and log in there.
+
+Either way the backend auto-detects the session and starts serving.
 
 Full details — including deploying on [Dokploy](https://dokploy.com) straight
 from git (no shell access needed) — in
@@ -50,9 +57,9 @@ from git (no shell access needed) — in
 - **Comments**, including **replies** — reply *previews* come free; full reply
   threads are fetched on demand behind the **"Load comment replies"** setting.
 - **Import subscriptions** — in Grayjay, open the Instagram source's detail
-  page and tap **Login** once (a one-tap formality — see below), then
-  **Import Subscriptions** pulls in the accounts you follow as Grayjay
-  subscriptions.
+  page and tap **Login** (that's the noVNC login above, opened in Grayjay's
+  own webview), then **Import Subscriptions** pulls in the accounts you follow
+  as Grayjay subscriptions.
 
 Posting/following on Instagram's side are out of scope.
 

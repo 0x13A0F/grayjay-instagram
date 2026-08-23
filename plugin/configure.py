@@ -11,6 +11,14 @@ Env:
     IG_API_KEY      optional   shared secret (must equal the server's IG_API_KEY)
     IG_SOURCE_URL   optional   where you serve the config (sets sourceUrl, used
                                by Grayjay for plugin auto-updates)
+    IG_VNC_BASE     optional   PUBLIC base URL of the backend's noVNC login UI,
+                               e.g. http://1.2.3.4:6080. Grayjay's "Login"
+                               button opens it, so the first-time Instagram
+                               login works from the phone. Defaults to
+                               IG_API_BASE's host on port IG_VNC_PORT.
+    IG_VNC_PORT     optional   host port the noVNC UI is published on
+                               (default 6080). Only used to build the
+                               IG_VNC_BASE default; ignored if that is set.
     IG_SIGN_KEY_B64         optional   a PEM RSA private key, base64-encoded to
                                        one line (e.g. `base64 -w0 key.pem` or,
                                        on macOS, `base64 -i key.pem | tr -d
@@ -26,12 +34,16 @@ Env:
     fine but shows a "missing signature" security notice.
 
 Writes ./dist/{InstagramScript.js, InstagramConfig.json, icon.png, qr.svg,
-index.html, login.html}. Serve ./dist - load <host>/InstagramConfig.json in
-Grayjay directly, or open <host>/ for a page with a QR code to scan instead.
-login.html is a decoy page for Grayjay's native "Login" button (Source
-Detail screen, unlocks Import Subscriptions/Playlists) - this plugin's real
-Instagram session lives in the backend, so tapping Login just has to load
-that one page once; no credentials are collected there.
+index.html}. Serve ./dist - load <host>/InstagramConfig.json in Grayjay
+directly, or open <host>/ for a page with a QR code to scan instead.
+
+Grayjay's native "Login" button (Source Detail screen) is pointed at the
+BACKEND's noVNC login wrapper, not at a page served from here: tapping it
+opens the real Camoufox browser sitting on Instagram's login page, and the
+wrapper jumps to completionUrl once the backend reports a live session -
+which closes the webview and marks the source logged in (that's what unlocks
+Import Subscriptions/Playlists). So the whole first-time setup is doable from
+the phone alone.
 
     IG_API_BASE=https://ig.example.com IG_API_KEY=... python3 configure.py
 """
@@ -43,7 +55,7 @@ import os
 import re
 import shutil
 import sys
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import qrcode
 import qrcode.image.svg
@@ -54,6 +66,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 api_base = (os.getenv("IG_API_BASE") or "").rstrip("/")
 api_key = os.getenv("IG_API_KEY") or ""
 source_url = os.getenv("IG_SOURCE_URL") or ""
+vnc_base = (os.getenv("IG_VNC_BASE") or "").rstrip("/")
+vnc_port = (os.getenv("IG_VNC_PORT") or "").strip() or "6080"
 
 if not api_base:
     sys.exit("IG_API_BASE is required "
@@ -143,12 +157,32 @@ cdn = [x for x in cfg.get("allowUrls", [])
 cfg["allowUrls"] = list(dict.fromkeys([parsed.netloc, parsed.hostname] + cdn))
 if source_url:
     cfg["sourceUrl"] = source_url
-# authentication.loginUrl: same origin as sourceUrl (this plugin server), not
-# the backend. Grayjay's login flow is a decoy - see login.html - so it just
-# needs to load SOMETHING; no real Instagram credentials touch it.
-plugin_origin = urlparse(cfg["sourceUrl"])
-login_url = f"{plugin_origin.scheme}://{plugin_origin.netloc}/login.html"
-cfg.setdefault("authentication", {})["loginUrl"] = login_url
+# authentication: point Grayjay's built-in login webview at the backend's
+# noVNC login wrapper, so the Instagram login itself happens inside Grayjay
+# (phone-only setup). The wrapper needs the API origin to poll /health, hence
+# the ?api= parameter.
+#
+# completionUrl ends with "?*", which Grayjay matches as "same URL, ignoring
+# the query string" - so the wrapper can add a cache-buster and still trigger
+# onLogin (exact-match would be brittle). Reaching it closes the webview and
+# flips the source to logged-in, which is what reveals Import Subscriptions.
+if not vnc_base:
+    # Same host as the API, on the port noVNC is PUBLISHED on - that's the
+    # host side of the compose port mapping (IG_VNC_PORT), not the fixed 6080
+    # inside the container.
+    vnc_base = f"{parsed.scheme}://{parsed.hostname}:{vnc_port}"
+vnc_parsed = urlparse(vnc_base)
+if not vnc_parsed.scheme or not vnc_parsed.hostname:
+    sys.exit(f"IG_VNC_BASE is not a valid URL: {vnc_base!r}")
+# The login webview lives on the noVNC origin, so allow it too (it's usually
+# the same host as the API, just another port).
+cfg["allowUrls"] = list(dict.fromkeys(
+    cfg["allowUrls"] + [vnc_parsed.netloc, vnc_parsed.hostname]))
+login_url = f"{vnc_base}/login.html?{urlencode({'api': api_base})}"
+cfg["authentication"] = {
+    "loginUrl": login_url,
+    "completionUrl": f"{vnc_base}/login-done.html?*",
+}
 if script_signature:
     cfg["scriptSignature"] = script_signature
     cfg["scriptPublicKey"] = script_public_key
@@ -187,14 +221,12 @@ page = page.replace("{{WARNING_HTML}}", warning_html)
 with open(os.path.join(out, "index.html"), "w") as f:
     f.write(page)
 
-# --- login page: static, no templating needed (see login_url above) ---------
-shutil.copy(os.path.join(HERE, "login.html"), os.path.join(out, "login.html"))
-
 print(f"wrote dist/ for backend {api_base} "
       f"(API key {'set' if api_key else 'EMPTY'})")
 print(f"  allowUrls = {cfg['allowUrls']}")
 print(f"  install page + QR -> {grayjay_url}")
 print(f"  authentication.loginUrl -> {login_url}")
+print(f"  authentication.completionUrl -> {cfg['authentication']['completionUrl']}")
 if script_signature:
     print("  script signed (scriptSignature/scriptPublicKey set)")
 else:

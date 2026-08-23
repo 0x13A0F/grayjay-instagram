@@ -12,6 +12,10 @@
 #   IG_API_PORT     host port for the backend API   (default 8000)
 #   IG_PLUGIN_PORT  host port for the plugin server (default 8080)
 #   IG_VNC_PORT     host port for the noVNC login   (default 6080)
+#   IG_VNC_BASE     PUBLIC noVNC URL Grayjay's "Login" button opens
+#                   (default: IG_API_BASE's host on :6080)
+#   VNC_GEOMETRY    remote screen size (default 1280x900x24; use a portrait
+#                   size like 900x1500x24 when logging in from a phone)
 #   CACHE_MAX_TTL   cap (seconds) on the plugin-requested cache TTL (default 600)
 #   CACHE_DEFAULT_TTL  cache TTL when a request sends no header (default 0=off)
 # On a shared host, set the *_PORT vars to free ports and point IG_API_BASE /
@@ -26,8 +30,11 @@
 #   IG_SIGN_KEY_PASSPHRASE  only if that key is encrypted
 # See backend/server/README.md ("Signing the plugin") for how to generate one.
 #
-# First run has no Instagram session: open http://<host>:<IG_VNC_PORT>/vnc.html,
-# log in, and the backend auto-detects the session and serves (no shell/TTY).
+# First run has no Instagram session. Either open
+# http://<host>:<IG_VNC_PORT>/vnc.html in any browser and log in, or - phone
+# only - install the plugin and tap "Login" on the source in Grayjay, which
+# opens that same browser in its login webview and closes itself once the
+# session lands. Either way the backend auto-detects it (no shell/TTY).
 services:
   ig-camoufox:
     build:
@@ -46,6 +53,9 @@ services:
       - DISPLAY=:0
       - IG_API_KEY=${IG_API_KEY:-}
       - VNC_PASS=${VNC_PASS:-}     # protect the noVNC login UI (recommended)
+      # Remote screen size. Portrait (e.g. 900x1500x24) is much easier to use
+      # when the login happens on a phone via Grayjay's login webview.
+      - VNC_GEOMETRY=${VNC_GEOMETRY:-1280x900x24}
       # Response cache (the `redis` service below). The TTL is driven per
       # request by the plugin's "Cache duration" setting; these just cap it.
       - REDIS_URL=redis://redis:6379/0
@@ -84,6 +94,12 @@ services:
       - IG_API_BASE=${IG_API_BASE:-http://localhost:8000}
       - IG_API_KEY=${IG_API_KEY:-}
       - IG_SOURCE_URL=${IG_SOURCE_URL:-http://localhost:8080/InstagramConfig.json}
+      # Where Grayjay's "Login" button points: the backend's noVNC login UI.
+      # Defaults to IG_API_BASE's host on the port noVNC is published on
+      # (IG_VNC_PORT, same value as the ig-camoufox mapping above). Set
+      # IG_VNC_BASE only if that's still wrong - separate domain, TLS in front.
+      - IG_VNC_BASE=${IG_VNC_BASE:-}
+      - IG_VNC_PORT=${IG_VNC_PORT:-6080}
       - IG_SIGN_KEY_B64=${IG_SIGN_KEY_B64:-}
       - IG_SIGN_KEY_PATH=${IG_SIGN_KEY_PATH:-}
       - IG_SIGN_KEY_PASSPHRASE=${IG_SIGN_KEY_PASSPHRASE:-}

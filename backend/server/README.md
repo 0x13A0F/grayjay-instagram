@@ -22,6 +22,7 @@ plugin ──:8000──> FastAPI ──> one logged-in Camoufox page
 | `utils.py` | shared stateless helpers (incl. reel shortcode → media pk codec) |
 | `fingerprint.py` | pins one real Camoufox fingerprint preset (persisted in the profile) so login + serving + restarts share the same identity |
 | `serve-vnc.sh` | container entrypoint — starts the virtual display + noVNC, then the API (see **Login** below) |
+| `vnc-login/` | the two pages Grayjay's **Login** button drives: `login.html` (noVNC + `/health` watcher) and `login-done.html` (the plugin's `completionUrl`) |
 | `Dockerfile` | the backend image (xvfb + Firefox). The stack's `docker-compose.yml` lives at the **repo root** |
 
 Tests live in **`backend/tests/`** (a sibling of `server/`) — run them from
@@ -31,7 +32,8 @@ Tests live in **`backend/tests/`** (a sibling of `server/`) — run them from
 ## Setup
 
 > **TL;DR:** set the `.env` (step 1) → `docker compose up -d --build`
-> (step 2) → open `http://<host>:6080/vnc.html` and log in once (see **Login**).
+> (step 2) → log in once, from a browser at `http://<host>:6080/vnc.html`
+> or straight from the phone via Grayjay's **Login** button (see **Login**).
 
 ### 1. Configure (.env)
 The compose stack lives at the **repo root** — run these steps from there.
@@ -85,6 +87,27 @@ the Instagram login page and `/health` reports `needs_login:true`. Just:
 3. Done — the backend **auto-detects** the session (polls for the `sessionid`
    cookie), navigates home, and starts serving. `/health` flips to
    `ready:true`. Nothing to press; the **same** browser now serves requests.
+
+### …or from the phone, inside Grayjay (no laptop)
+
+Install the plugin first, then on the Instagram source's detail page tap
+**Login**. Grayjay's login webview opens `login.html` on the noVNC port — the
+same remote browser, wrapped in a page that watches `/health` and, the moment
+the session lands, navigates to `login-done.html`. That URL is the plugin's
+`completionUrl`, so Grayjay closes the webview and marks the source
+**logged in** (which is also what reveals **Import Subscriptions**).
+
+- Both pages live in [vnc-login/](vnc-login), copied next to noVNC's own web
+  root at startup by `serve-vnc.sh` (so they share the VNC websocket origin).
+- `IG_VNC_BASE` tells the plugin where that page is; it defaults to
+  `IG_API_BASE`'s host on `:6080`. Set it if you moved the port, use a
+  separate domain, or terminate TLS in front.
+- Set **`VNC_GEOMETRY`** to a portrait size (e.g. `900x1500x24`) — the default
+  `1280x900x24` is landscape and cramped on a phone.
+- The **Skip** button in the corner completes the flow by hand, for when the
+  backend can't be polled (e.g. the page is HTTPS but the API is HTTP).
+- On an HTTPS deploy the noVNC port must be TLS-terminated too: an `https://`
+  wrapper page cannot open a `ws://` VNC socket (mixed content).
 
 The session + the pinned fingerprint are written into the **named Docker
 volume** `ig-profile` (declared in `docker-compose.yml`), so they survive
