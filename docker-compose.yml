@@ -39,7 +39,6 @@ services:
   ig-camoufox:
     build:
       context: ./backend/server
-    container_name: ig-camoufox
     ports:
       # HOST:container. Only the host side is configurable - change it (e.g. on
       # a shared box where 8000/6080 are taken) without touching the app.
@@ -70,7 +69,6 @@ services:
   # and Instagram is hit far less (avoids rate-limits).
   redis:
     image: redis:7-alpine
-    container_name: ig-redis
     command: ["redis-server", "--maxmemory", "128mb",
               "--maxmemory-policy", "allkeys-lru",
               "--save", "", "--appendonly", "no"]
@@ -87,7 +85,6 @@ services:
   plugin:
     build:
       context: ./plugin
-    container_name: ig-plugin
     environment:
       # IG_API_BASE = the PUBLIC backend URL the plugin (in Grayjay) reaches -
       # NOT a docker service name. Defaults suit same-host local testing.
