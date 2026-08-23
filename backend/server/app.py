@@ -18,9 +18,11 @@ import normalize as N
 import hmac
 import json
 import os
+import traceback
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
+from urllib.parse import quote, urlencode
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 import cache
@@ -131,6 +133,23 @@ def _fail(err: IGError):
     return JSONResponse(
         status_code=code,
         content={"detail": err.detail, "exc_type": "IGError"},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Anything a route's `except IGError` doesn't catch (a route-level bug, or
+    # a non-IGError raised through browser.ig_fetch - e.g. a Playwright error
+    # that isn't recognized as "browser dead", see browser.py's ig_fetch_raw)
+    # used to surface as an opaque 500 with nothing in the logs. Print the
+    # route + exception + full traceback so it's actually diagnosable.
+    target = f"{request.url.path}?{request.url.query}" if request.url.query \
+        else request.url.path
+    print(f"UNHANDLED ERROR on GET {target}: {type(exc).__name__}: {exc}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "exc_type": type(exc).__name__},
     )
 
 
@@ -279,10 +298,21 @@ async def saved_reels(
     try:
         if collection_id == ALL_SAVED_ID:
             path = "/api/v1/feed/saved/posts/"
+            params = {"max_id": cursor} if cursor else None
+            resp = await browser.ig_fetch(path, params=params)
         else:
-            path = f"/api/v1/feed/collection/{collection_id}/posts/"
-        params = {"max_id": cursor} if cursor else None
-        resp = await browser.ig_fetch(path, params=params)
+            # Instagram's OWN web client always sends max_id on this endpoint,
+            # even empty (?max_id=) - a bare request with no query string at
+            # all 404s. browser.ig_fetch's generic param handling strips
+            # empty-string values (fine for every other endpoint), so bake
+            # the query string in directly here instead of via params=.
+            # quote() the id: it lands in the PATH right before a
+            # hand-built query string, so an unescaped ?/#/& in it would
+            # retarget the upstream request.
+            cid = quote(collection_id, safe="")
+            path = (f"/api/v1/feed/collection/{cid}/posts/"
+                    f"?{urlencode({'max_id': cursor})}")
+            resp = await browser.ig_fetch(path)
         return N.norm_saved_feed(resp)
     except IGError as e:
         return _fail(e)
