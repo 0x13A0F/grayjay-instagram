@@ -1,8 +1,9 @@
 # Grayjay Instagram plugin
 
 A [Grayjay](https://grayjay.app) source for **Instagram** — a **home feed**
-(your timeline), search creators, browse & play their **Reels**, subscribe to
-accounts, and read **comments (with replies)** — without the end-user logging in.
+(your timeline), search creators, browse & play their **Reels**, open your
+**saved collections** as playlists, and read **comments (with replies)** —
+with no Instagram credentials ever entered into Grayjay itself.
 
 It's two pieces:
 
@@ -11,7 +12,8 @@ It's two pieces:
   logged-in **[Camoufox](https://camoufox.com)** (stealth Firefox) browser
   and exposes a small REST API. The browser profile *is* the session, so the
   plugin needs no tokens — you log in once with your own account, through a
-  browser-based login UI (noVNC) baked into the backend.
+  browser-based login UI (noVNC) baked into the backend and reachable from
+  Grayjay itself.
 
 ```
 [Grayjay plugin] ──HTTP──> [Camoufox backend] ──logged-in browser──> [Instagram]
@@ -54,8 +56,15 @@ from git (no shell access needed) — in
 - **Search** — keyword **reel search** (Grayjay's search bar) and **creator
   search**; plus **channel browse** + subscribe (Grayjay-local).
 - **Reels/videos** playback.
+- **Saved playlists** — your Instagram **saved collections** show up in
+  Grayjay's *Playlists* search (plus an "All saved reels" entry) and play like
+  any other playlist.
 - **Comments**, including **replies** — reply *previews* come free; full reply
   threads are fetched on demand behind the **"Load comment replies"** setting.
+- **Response cache** — repeated requests (flipping between pages, re-opening a
+  channel) are served from Redis instead of hitting Instagram again, which
+  keeps navigation snappy and rate-limits away. The **"Cache duration"**
+  plugin setting controls it (Off / 1 / 3 / 5 / 10 minutes).
 - **Import subscriptions** — in Grayjay, open the Instagram source's detail
   page and tap **Login** (that's the noVNC login above, opened in Grayjay's
   own webview), then **Import Subscriptions** pulls in the accounts you follow
@@ -70,8 +79,8 @@ backend/server/  Camoufox + FastAPI backend (app.py, browser.py, …)
 ```
 
 ## Roadmap
-Planned next: **importing** your playlists and **playlist search**.
-(Subscription import and server-side response caching are done.)
+Planned next: **importing** your saved collections through Grayjay's *Import
+Playlists* (browsing and searching them already works).
 
 > Heads-up: it runs on a single Instagram account. Heavy, rapid browsing can
 > temporarily rate-limit some endpoints (e.g. the reels feed); they recover

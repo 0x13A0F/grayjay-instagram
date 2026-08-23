@@ -141,10 +141,14 @@ resumes. No profile transfer, no `docker compose run`, no ENTER.
    IG_SOURCE_URL=http://<server-ip>:18080/InstagramConfig.json
    ```
    (Only the host side moves; the containers still listen on 8000/8080/6080.)
+   `IG_VNC_PORT` is also what the plugin's **Login** button points at — it's
+   derived automatically, so `IG_VNC_BASE` only needs setting if noVNC lives
+   somewhere else entirely (its own domain, or TLS in front).
 3. **Deploy.** Dokploy runs `docker compose up -d --build` — no manual commands.
-4. Open **`http://<server-ip>:<IG_VNC_PORT>/vnc.html`** and log in once (step
-   above). The backend serves automatically; open `http://<server-ip>:<IG_PLUGIN_PORT>/`
-   and scan the QR code in Grayjay to install.
+4. Open `http://<server-ip>:<IG_PLUGIN_PORT>/` and scan the QR code in Grayjay
+   to install, then tap **Login** on the source and log in there — or, from a
+   computer, open **`http://<server-ip>:<IG_VNC_PORT>/vnc.html`** instead
+   (step above). The backend starts serving on its own either way.
 
 Redeploys (git push → Redeploy) reuse the `ig-profile` volume, so you stay
 logged in.
@@ -153,6 +157,9 @@ logged in.
 > service a **domain** in Dokploy (Traefik routes by hostname, adds HTTPS, no
 > port clashes). Add a basic-auth middleware to the noVNC one. Then the `*_PORT`
 > vars don't matter — Traefik reaches the containers over the compose network.
+> Set `IG_VNC_BASE` to the noVNC domain in that setup, and make sure Traefik
+> passes **WebSocket upgrades** through to it: over HTTPS the login page can
+> only reach the VNC socket as `wss://`.
 
 ## Signing the plugin (optional)
 
