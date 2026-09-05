@@ -12,7 +12,9 @@ No Instagram credentials are ever entered into Grayjay itself.
 [![Camoufox](https://img.shields.io/badge/engine-Camoufox-ff6f00?style=flat-square&logo=firefoxbrowser&logoColor=white)](https://camoufox.com)
 [![License](https://img.shields.io/badge/license-GPL--3.0-4c1?style=flat-square)](LICENSE)
 
-<img src="docs/media/demo.gif" width="260" alt="Browsing Instagram Reels inside Grayjay">
+<img src="docs/media/demo.gif" width="240" alt="Searching Instagram, opening a saved collection as a playlist, and playing a Reel inside Grayjay">
+
+<sub>Keyword search → your saved collections as playlists → playback.</sub>
 
 </div>
 
@@ -49,12 +51,6 @@ genuine session and fingerprint, and calls the same endpoints the web app does.
 
 Posting and following are out of scope.
 
-## Preview
-
-| Home feed | Saved collections | Login from the phone |
-|:--:|:--:|:--:|
-| <img src="docs/media/home-feed.gif" width="200" alt="Home feed"> | <img src="docs/media/playlists.gif" width="200" alt="Saved collections as playlists"> | <img src="docs/media/login.gif" width="200" alt="Logging in through Grayjay's webview"> |
-
 ## Install
 
 **1. Deploy.** Copy [`.env.example`](.env.example) to `.env`, fill it in, then:
@@ -73,8 +69,12 @@ server (`:8080`).
 </div>
 
 **3. Log in, once.** Tap **Login** on the source in Grayjay — its webview opens
-the backend's browser and closes itself once the session lands — or use
+the backend's real browser, and closes itself once the session lands — or use
 `http://<host>:6080/vnc.html` from a computer. Serving starts automatically.
+
+<div align="center">
+<img src="docs/media/login.gif" width="240" alt="Logging into Instagram from the phone, through Grayjay's own webview">
+</div>
 
 > Deploying on [Dokploy](https://dokploy.com) straight from git, signing the
 > plugin, and every environment variable are covered in
@@ -93,7 +93,8 @@ the backend's browser and closes itself once the session lands — or use
 It runs on **one** account, so the backend behaves like a person, not a scraper:
 
 - **Pacing is server-side and jittered** — Instagram flags request *bursts*,
-  not volume. A 429 or login wall triggers exponential backoff.
+  not volume. A 429 or login wall triggers exponential backoff, and while it
+  lasts Grayjay is told how long to wait rather than left hanging.
 - **Pagers stop instead of spinning** — a page with no videos ends the pager
   instead of making Grayjay chase cursors forever.
 - **GraphQL query ids self-heal** — Instagram retires them on every web

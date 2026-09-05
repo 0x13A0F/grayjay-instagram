@@ -244,7 +244,6 @@ outbound calls itself, in `throttle.py`:
   `IG_BACKOFF_MAX` (15 min), and decaying as calls start succeeding again.
 - Pacing is **outbound only**: cache hits never reach it, so repeat browsing
   stays instant.
-
 - **Requests are never parked.** Pacing waits at most `IG_MAX_WAIT` (15s)
   inside a request; if the wait would be longer — which is exactly what a
   backoff window means — the backend answers `429` + `Retry-After`
