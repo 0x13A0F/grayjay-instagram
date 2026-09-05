@@ -17,11 +17,17 @@ from typing import Any, Dict, Optional
 
 from camoufox.async_api import AsyncCamoufox
 
+import docids
 from fingerprint import fingerprint_kwargs
+from throttle import throttle
 from utils import clip_text
 
 IG_DOMAIN = "https://www.instagram.com"
 IG_APP_ID = "936619743392459"
+# The two paths Instagram posts persisted GraphQL queries to. We watch them
+# during doc_id discovery to learn the ids its own JS is using - matched
+# exactly, and only on the IG_DOMAIN origin.
+GRAPHQL_PATHS = ("/api/graphql", "/graphql/query")
 PROFILE_DIR = os.getenv("CAMOUFOX_PROFILE_DIR", "/data/profile")
 
 
@@ -120,6 +126,10 @@ class IGBrowser:
         # noVNC. A background task watches for the login and flips ready on.
         self.needs_login = False
         self._login_task = None
+        # Set to a dict while discover_doc_ids() is running; the request
+        # listener only harvests then, so our OWN /api/graphql calls (which
+        # carry a possibly-stale id) can never overwrite a learned one.
+        self._harvest = None
 
     async def start(self):
         self.camoufox = AsyncCamoufox(
@@ -135,6 +145,7 @@ class IGBrowser:
         else:
             self.page = await self.browser.new_page()
         self.page.set_default_timeout(45000)
+        self.page.on("request", self._on_request)
         await self._goto_ig()
         # Integrated login: if the profile has no session yet, don't block
         # startup - drop to the IG login page (viewable over noVNC) and poll
@@ -258,6 +269,80 @@ class IGBrowser:
         await self.start()
         print("browser relaunched.")
 
+    def _on_request(self, request) -> None:
+        """Harvest doc_ids from Instagram's own GraphQL posts.
+
+        Sync Playwright callback: never raise, never block. Inert unless
+        discover_doc_ids() has opened a harvest window.
+        """
+        if self._harvest is None:
+            return
+        try:
+            if request.method != "POST":
+                return
+            # Origin-check, not a substring match: any frame on the page can
+            # post to its own /api/graphql, and we must not learn ITS ids.
+            from urllib.parse import urlsplit
+            u = urlsplit(request.url)
+            if f"{u.scheme}://{u.netloc}" != IG_DOMAIN:
+                return
+            if u.path not in GRAPHQL_PATHS:
+                return
+            body = request.post_data or ""
+            if "doc_id" not in body:
+                return
+            from urllib.parse import parse_qs
+            q = parse_qs(body)
+            friendly = (q.get("fb_api_req_friendly_name") or [""])[0]
+            doc_id = (q.get("doc_id") or [""])[0]
+            if friendly and doc_id:
+                self._harvest[friendly] = doc_id
+                docids.observe(friendly, doc_id)
+        except Exception as e:
+            print(f"doc_id harvest error (ignored): {e}")
+
+    async def discover_doc_ids(self, query: str = "reels") -> Dict[str, str]:
+        """Load a real search SERP and learn which doc_ids Instagram uses.
+
+        This is an ordinary page load on the logged-in account - the same
+        thing a person searching would do - but it IS account traffic, so
+        callers must respect docids.DISCOVERY_COOLDOWN. Scrolling the SERP
+        triggers the separate pagination query, whose id we also need.
+        Returns {friendly_name: doc_id} for everything seen.
+        """
+        if not self.ready or self.page is None:
+            return {}
+        from urllib.parse import quote
+        seen: Dict[str, str] = {}
+        async with self.lock:
+            self._harvest = seen
+            try:
+                await throttle.wait()
+                await self.page.goto(
+                    f"{IG_DOMAIN}/explore/search/keyword/?q={quote(query)}",
+                    wait_until="domcontentloaded")
+                await asyncio.sleep(4)
+                for _ in range(3):
+                    if docids.SEARCH_PAGE in seen:
+                        break
+                    await self.page.evaluate(
+                        "() => window.scrollBy(0, window.innerHeight * 3)")
+                    await asyncio.sleep(3)
+            except Exception as e:
+                print(f"doc_id discovery failed: {e}")
+            finally:
+                self._harvest = None
+                # ig_fetch runs in-page, so leave the page back on the home
+                # origin regardless of how discovery went.
+                try:
+                    await self.page.goto(
+                        IG_DOMAIN + "/", wait_until="domcontentloaded")
+                except Exception as e:
+                    print(f"post-discovery nav failed (ignored): {e}")
+        print(f"doc_id discovery saw {len(seen)} quer"
+              f"{'y' if len(seen) == 1 else 'ies'}: {sorted(seen)}")
+        return seen
+
     async def get_tokens(self) -> Dict:
         """Extract fb_dtsg + lsd from the logged-in page. Instagram's
         /api/graphql POSTs are rejected (HTML shell) without them."""
@@ -309,6 +394,11 @@ class IGBrowser:
         }
 
         async with self.lock:
+            # Pace INSIDE the lock so the gap is measured between actual
+            # Instagram calls. Cache hits never get here, so repeat browsing
+            # stays instant; only real outbound traffic is spaced.
+            from throttle import requested_interval
+            await throttle.wait(requested_interval.get())
             try:
                 result = await self.page.evaluate(FETCH_JS_CODE, req)
             except Exception as e:
@@ -339,14 +429,24 @@ class IGBrowser:
         if status < 200 or status >= 300:
             if status == 401:
                 await self._maybe_flag_logout()
+            if status == 429:
+                throttle.penalize()
             raise IGError(status, clip_text(text))
         try:
-            return json.loads(text)
+            parsed = json.loads(text)
         except json.JSONDecodeError:
             # Almost always an HTML login/checkpoint page - if the session
             # cookie is gone, switch to "needs login" so noVNC re-login works.
             await self._maybe_flag_logout()
+            # A wall served to a LIVE session is a soft rate-limit, so widen
+            # the gap - but a GraphQL rejection (retired doc_id) is not about
+            # request volume, and backing off 60s for it would just make the
+            # relearn-and-retry crawl.
+            if not _is_query_rejection(text):
+                throttle.penalize()
             raise IGError(status, "non-JSON response: " + clip_text(text))
+        throttle.relax()
+        return parsed
 
 
 class IGError(Exception):
@@ -354,6 +454,17 @@ class IGError(Exception):
         super().__init__(f"IG {status}: {detail}")
         self.status = status
         self.detail = detail
+
+
+def _is_query_rejection(text: str) -> bool:
+    """Facebook's `for (;;);{"__ar":1,"error":...}` envelope.
+
+    The anti-JSON-hijacking prefix marks a response from the GraphQL/AJAX
+    tier - i.e. the request reached Instagram and was rejected on its
+    merits (typically a retired doc_id), as opposed to a login/checkpoint
+    wall, which is HTML.
+    """
+    return text.lstrip().startswith("for (;;);")
 
 
 def _is_browser_dead(e: Exception) -> bool:

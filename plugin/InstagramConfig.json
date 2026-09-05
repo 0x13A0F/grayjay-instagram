@@ -7,7 +7,7 @@
     "sourceUrl": "http://192.168.1.10:8080/InstagramConfig.json",
     "repositoryUrl": "https://github.com/0x13A0F/grayjay-instagram",
     "scriptUrl": "./InstagramScript.js",
-    "version": 11,
+    "version": 12,
     "iconUrl": "./icon.png",
     "id": "f22cd149-a75e-4486-9ccd-92f611beca61",
     "packages": [
@@ -51,6 +51,19 @@
                 "10 minutes"
             ],
             "default": "2"
+        },
+        {
+            "variable": "requestSpacing",
+            "name": "Request spacing",
+            "description": "Minimum delay the backend leaves between two real Instagram requests. Instagram flags accounts on bursts of traffic, not on volume, so spacing requests out is the single best way to avoid rate-limits and \"suspicious activity\" warnings. Larger = safer but slower to load. The backend enforces its own minimum, so this can only make it more careful.",
+            "type": "Dropdown",
+            "options": [
+                "Fast (1s)",
+                "Normal (2s)",
+                "Careful (4s)",
+                "Very careful (8s)"
+            ],
+            "default": "1"
         }
     ]
 }

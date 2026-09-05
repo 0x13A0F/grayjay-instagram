@@ -15,8 +15,10 @@ plugin ──:8000──> FastAPI ──> one logged-in Camoufox page
 ## Files
 | File | Role |
 |---|---|
-| `app.py` | FastAPI routes (`/health`, `/search/users`, `/search/reels`, `/user`, `/feed`, `/following`, `/saved/collections`, `/saved/reels`, `/user/reels`, `/media`, `/media/comments`, `/media/comments/replies`) + the auth + response-cache middleware |
+| `app.py` | FastAPI routes (`/health`, `/search/users`, `/search/reels`, `/user`, `/feed`, `/following`, `/saved/collections`, `/saved/reels`, `/user/reels`, `/media`, `/media/comments`, `/media/comments/replies`, `/docids`) + the auth + response-cache middleware |
 | `browser.py` | Camoufox manager + `ig_fetch()` (in-page fetch) + serialization lock + integrated login detection + self-heal on crash |
+| `throttle.py` | mandatory outbound pacing — minimum gap + jitter between real Instagram calls, and automatic backoff after a 429 (see **Request pacing**) |
+| `docids.py` | GraphQL persisted-query id registry — resolves each id and relearns it when Instagram rotates its web build (see **GraphQL doc_ids**) |
 | `cache.py` | best-effort Redis response cache (see **Caching**) — key builder + safe get/set that never breaks a request |
 | `normalize.py` | Instagram JSON → the shapes the plugin reads |
 | `utils.py` | shared stateless helpers (incl. reel shortcode → media pk codec) |
@@ -26,8 +28,9 @@ plugin ──:8000──> FastAPI ──> one logged-in Camoufox page
 | `Dockerfile` | the backend image (xvfb + Firefox). The stack's `docker-compose.yml` lives at the **repo root** |
 
 Tests live in **`backend/tests/`** (a sibling of `server/`) — run them from
-`backend/` with `PYTHONPATH=server`: `test_normalize.py` / `test_shortcode.py`
-(unit tests, no browser needed).
+`backend/` with `PYTHONPATH=server`: `test_normalize.py` / `test_shortcode.py` /
+`test_docids.py` / `test_throttle.py` (unit tests, no browser, network or
+Redis needed). The plugin has its own: `node plugin/test_pagers.js`.
 
 ## Setup
 
@@ -221,6 +224,64 @@ less Instagram rate-limiting.
 
 Check it: responses carry an `X-Cache: HIT|MISS` header;
 `docker exec ig-redis redis-cli keys 'igcache*'` lists cached entries.
+
+## Request pacing
+
+Instagram doesn't flag accounts on request *volume* so much as on request
+*bursts* — a page arriving every 80ms is unmistakably not a person. Grayjay
+will happily ask for pages as fast as they arrive, so the backend paces
+outbound calls itself, in `throttle.py`:
+
+- A **minimum gap** between two real Instagram calls, with **jitter** (±25%),
+  because perfectly regular spacing is itself a signal.
+- The gap is a **floor** (`IG_MIN_INTERVAL_FLOOR`, default 1s). The plugin
+  asks for a gap via `X-Min-Interval` (the **"Request spacing"** setting), and
+  that request is clamped: a client can only ever ask the backend to go
+  *slower*, never faster.
+- **Automatic backoff**: a 429 — or a login wall served to a still-valid
+  session, which is a soft rate-limit — pauses Instagram calls for
+  `IG_BACKOFF_BASE` (60s), doubling per consecutive hit up to
+  `IG_BACKOFF_MAX` (15 min), and decaying as calls start succeeding again.
+- Pacing is **outbound only**: cache hits never reach it, so repeat browsing
+  stays instant.
+
+`GET /throttle` reports the current state (`strikes`, `penalty_remaining`).
+A 429 response carries `Retry-After` so the plugin doesn't retry into the
+same wall — and the plugin never retries a 429 at all.
+
+## GraphQL doc_ids
+
+A few endpoints (keyword reel search, saved collections) aren't in Instagram's
+REST API — they're **persisted GraphQL queries**. The web client never sends
+query text; each query is registered on Meta's servers at build time and
+addressed by a numeric `doc_id`. We impersonate that client, so we must send
+the same ids.
+
+The catch: **Instagram retires those ids on every web release**, and the id is
+identical for every account on earth — so a rotation breaks every deployment of
+this backend at the same moment. Symptom: `/search/reels` (or
+`/saved/collections`) starts returning 500 with a non-JSON body like
+`for (;;);{"__ar":1,"error":1357004,"errorSummary":"Sorry, something went
+wrong"...}` — a generic rejection that looks nothing like "your id expired".
+
+**This is handled automatically.** On such a failure the backend opens a real
+search page in the browser it already drives, watches which `doc_id`
+Instagram's own JavaScript posts, caches it in Redis (14 days) and retries the
+call. A rotation costs one page load, not a new release.
+
+- `GET /docids` — the ids in use and where each came from (`env` / `learned` /
+  `builtin`).
+- `POST /docids/refresh` — force a discovery pass (`?force=true` skips the
+  cooldown). Rarely needed.
+- Discovery is real traffic on your account, so it's rate-limited to one pass
+  per `IG_DOCID_DISCOVERY_COOLDOWN` (default 900s) no matter how many requests
+  fail.
+- `IG_DOC_ID_SEARCH` / `IG_DOC_ID_SEARCH_PAGE` / `IG_DOC_ID_SAVED` pin an id by
+  hand — an escape hatch if discovery can't find one (e.g. Instagram renamed
+  the query). **Pinning disables relearning for that query.**
+
+The built-in ids in `docids.py` are only the cold-start fallback, used until
+discovery runs for the first time.
 
 ## Notes / limits
 - **Heavy/slow**: a browser is hundreds of MB and seconds per call; requests

@@ -33,6 +33,16 @@ source.saveState = function () { return ""; };
 // =============================================================================
 // Backend HTTP layer  (the ONLY place that touches http / the session)
 // =============================================================================
+// Shown verbatim when Instagram rate-limits us. Home/search catch transient
+// errors and fall back to an empty pager, which would silently hide this -
+// the one error the user most needs to see - so they re-throw on this exact
+// message (see isRateLimit).
+const RATE_LIMIT_MSG = "Instagram is rate-limiting this account - the backend is backing off. Wait a minute, then try again; if it keeps happening, raise \"Request spacing\" in the plugin settings.";
+
+function isRateLimit(e) {
+    return !!e && e.message === RATE_LIMIT_MSG;
+}
+
 function apiGet(path, params) {
     if (!API_BASE) throw new ScriptException("Set the Backend API URL in plugin settings.");
     let url = API_BASE + path;
@@ -52,6 +62,10 @@ function apiGet(path, params) {
     // instant and Instagram is hit less. 0 / off -> header omitted (no cache).
     const cacheTtl = cacheTtlSeconds();
     if (cacheTtl > 0) headers["X-Cache-TTL"] = String(cacheTtl);
+    // Minimum gap the backend must leave between two real Instagram calls
+    // (see "Request spacing"). The backend clamps this to its own safe floor,
+    // so this can only ever ask it to go slower - never faster.
+    headers["X-Min-Interval"] = String(requestSpacingSeconds());
 
     // Retry transient backend errors (5xx / network blips) a few times.
     let lastMsg = "";
@@ -64,6 +78,12 @@ function apiGet(path, params) {
             } catch (e) {
                 throw new ScriptException("Backend returned invalid JSON for " + path);
             }
+        }
+
+        if (resp.code === 429) {
+            // Instagram rate-limited us and the backend is already sitting
+            // out a cooldown. Retrying now only deepens it.
+            throw new ScriptException(RATE_LIMIT_MSG);
         }
 
         if (resp.code === 401 || resp.code === 403) {
@@ -162,6 +182,31 @@ function cacheTtlSeconds() {
         return CACHE_OPTIONS[idx].seconds;
     }
     return CACHE_DEFAULT_SECONDS;
+}
+
+// "Request spacing" setting -> seconds sent as X-Min-Interval. Instagram
+// flags accounts on request BURSTS, so the backend enforces a minimum gap
+// between outbound calls; this picks how conservative to be. Keep in sync
+// with the "options" in InstagramConfig.json.
+const SPACING_OPTIONS = [
+    { label: "Fast (1s)", seconds: 1 },
+    { label: "Normal (2s)", seconds: 2 },
+    { label: "Careful (4s)", seconds: 4 },
+    { label: "Very careful (8s)", seconds: 8 },
+];
+const SPACING_DEFAULT_SECONDS = 2; // "Normal" - matches the setting default
+
+function requestSpacingSeconds() {
+    const raw = plug_settings.requestSpacing;
+    if (raw === undefined || raw === null || raw === "") return SPACING_DEFAULT_SECONDS;
+    for (const o of SPACING_OPTIONS) {         // exact label match first
+        if (raw === o.label) return o.seconds;
+    }
+    const idx = parseInt(raw, 10);             // otherwise treat it as an index
+    if (!isNaN(idx) && idx >= 0 && idx < SPACING_OPTIONS.length) {
+        return SPACING_OPTIONS[idx].seconds;
+    }
+    return SPACING_DEFAULT_SECONDS;
 }
 
 // =============================================================================
@@ -383,11 +428,52 @@ function toPlatformComment(contextUrl, mediaId, c) {
 // =============================================================================
 // Pagers
 // =============================================================================
+// Instagram's feeds are MIXED media and this plugin only plays videos, so a
+// backend page of 24 items can filter down to 0 renderable ones - very common
+// on a new account, whose "cold start" timeline is mostly photos.
+//
+// A pager that returns 0 items while still claiming hasMore makes Grayjay
+// immediately ask for the next page, and the next, forever: an endless
+// spinner in the UI and an unbounded burst of real Instagram requests, which
+// is exactly what gets an account flagged for automated behaviour.
+//
+// So: follow the cursor here, server-side, until we have something worth
+// showing - and if a few pages in a row yield nothing, report hasMore=false
+// and STOP rather than handing Grayjay an empty page to spin on.
+const MAX_PAGES_PER_FETCH = 3;   // hard cap on requests per Grayjay page
+const MIN_ITEMS_PER_FETCH = 5;   // stop early once we have a usable page
+
+// fetchPage(cursor) -> { items, next_cursor }
+function fetchVideoPage(fetchPage, cursor) {
+    const videos = [];
+    const seenIds = {};
+    let next = cursor || "";
+    let pages = 0;
+
+    do {
+        const page = fetchPage(next) || {};
+        next = page.next_cursor || "";
+        pages++;
+        const items = (page.items || []).filter(isVideoMedia);
+        for (const media of items) {
+            const id = String(media.id || media.pk || "");
+            if (id && seenIds[id]) continue;   // cursors can overlap
+            if (id) seenIds[id] = true;
+            videos.push(toPlatformVideo(media));
+        }
+    } while (videos.length < MIN_ITEMS_PER_FETCH && next && pages < MAX_PAGES_PER_FETCH);
+
+    // Nothing playable after several pages: end the pager instead of letting
+    // Grayjay spin. The user sees what we have (possibly nothing) and can
+    // pull to refresh, rather than the app hammering the backend on its own.
+    const hasMore = videos.length > 0 && !!next;
+    return { items: videos, cursor: next, hasMore: hasMore };
+}
+
 class ReelPager extends VideoPager {
     constructor(username, cursor) {
-        const page = apiGetUserReels(username, cursor);
-        const items = (page.items || []).filter(isVideoMedia).map(toPlatformVideo);
-        super(items, !!page.next_cursor, { username: username, cursor: page.next_cursor || "" });
+        const page = fetchVideoPage(c => apiGetUserReels(username, c), cursor);
+        super(page.items, page.hasMore, { username: username, cursor: page.cursor });
     }
     nextPage() {
         return new ReelPager(this.context.username, this.context.cursor);
@@ -399,9 +485,8 @@ class ReelPager extends VideoPager {
 // playable videos (this plugin can't open photo/carousel posts).
 class FeedPager extends VideoPager {
     constructor(cursor) {
-        const page = apiGetFeed(cursor);
-        const items = (page.items || []).filter(isVideoMedia).map(toPlatformVideo);
-        super(items, !!page.next_cursor, { cursor: page.next_cursor || "" });
+        const page = fetchVideoPage(c => apiGetFeed(c), cursor);
+        super(page.items, page.hasMore, { cursor: page.cursor });
     }
     nextPage() {
         return new FeedPager(this.context.cursor);
@@ -412,9 +497,8 @@ class FeedPager extends VideoPager {
 // Keyword reel search. Mixed media comes back; keep only playable videos.
 class SearchReelPager extends VideoPager {
     constructor(query, cursor, sessionId) {
-        const page = apiSearchReels(query, cursor, sessionId);
-        const items = (page.items || []).filter(isVideoMedia).map(toPlatformVideo);
-        super(items, !!page.next_cursor, { query: query, cursor: page.next_cursor || "", sessionId: sessionId });
+        const page = fetchVideoPage(c => apiSearchReels(query, c, sessionId), cursor);
+        super(page.items, page.hasMore, { query: query, cursor: page.cursor, sessionId: sessionId });
     }
     nextPage() {
         return new SearchReelPager(this.context.query, this.context.cursor, this.context.sessionId);
@@ -425,9 +509,8 @@ class SearchReelPager extends VideoPager {
 // Reels saved in one Instagram collection ("playlist"). Videos only.
 class SavedReelPager extends VideoPager {
     constructor(collectionId, cursor) {
-        const page = apiGetSavedReels(collectionId, cursor);
-        const items = (page.items || []).filter(isVideoMedia).map(toPlatformVideo);
-        super(items, !!page.next_cursor, { collectionId: collectionId, cursor: page.next_cursor || "" });
+        const page = fetchVideoPage(c => apiGetSavedReels(collectionId, c), cursor);
+        super(page.items, page.hasMore, { collectionId: collectionId, cursor: page.cursor });
     }
     nextPage() {
         return new SavedReelPager(this.context.collectionId, this.context.cursor);
@@ -470,6 +553,7 @@ source.getHome = function (continuationToken) {
     try {
         return new FeedPager("");
     } catch (e) {
+        if (isRateLimit(e)) throw e;   // never hide a rate-limit as "no videos"
         return new VideoPager([], false, {});
     }
 };
@@ -489,6 +573,7 @@ source.search = function (query, type, order, filters, continuationToken) {
     try {
         return new SearchReelPager(query, "", newSessionId());
     } catch (e) {
+        if (isRateLimit(e)) throw e;   // never hide a rate-limit as "no results"
         return new VideoPager([], false, {});
     }
 };

@@ -11,6 +11,8 @@ Routes:
   GET /media/comments?media_id=&amount=&cursor=
   GET /media/comments/replies?media_id=&comment_id=&cursor=
   GET /following?cursor=                          (logged-in account's follows)
+  GET /docids  |  POST /docids/refresh            (GraphQL query-id registry)
+  GET /throttle                                   (outbound pacing state)
 """
 
 import normalize as N
@@ -26,6 +28,8 @@ from urllib.parse import quote, urlencode
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 import cache
+import docids
+import throttle as th
 from browser import IGError, browser
 from utils import pk_str, shortcode_to_pk
 
@@ -40,14 +44,9 @@ _pk_cache = {}
 # The logged-in viewer's own pk (from the ds_user_id cookie), resolved once.
 _viewer_pk_cache = {}
 
-# GraphQL doc_ids for keyword reel search (xdt_fbsearch__top_serp_graphql).
-# These ROTATE when Instagram updates its web app. If keyword search starts
-# failing, re-capture from the browser (DevTools -> the request named
-# PolarisKeywordSearchExplorePage*) and update these (or the env overrides).
-DOC_ID_SEARCH = os.getenv("IG_DOC_ID_SEARCH", "27261995973455813")
-DOC_ID_SEARCH_PAGE = os.getenv("IG_DOC_ID_SEARCH_PAGE", "27606696395582173")
-# Saved-collections list (xdt_api__v1__collections__list_graphql_connection).
-DOC_ID_SAVED_COLLECTIONS = os.getenv("IG_DOC_ID_SAVED", "27125139683774183")
+# GraphQL persisted-query ids live in docids.py, which resolves them per call
+# (env pin > learned from the live page > built-in) and relearns them when
+# Instagram rotates its web build.
 ALL_SAVED_ID = "ALL_MEDIA_AUTO_COLLECTION"  # Instagram's "All posts" bucket
 
 
@@ -110,6 +109,20 @@ async def cache_responses(request: Request, call_next):
     return response
 
 
+# Outbound pacing. The plugin asks for a gap via X-Min-Interval (seconds);
+# throttle.clamp_interval enforces a floor, so a client can only ever ask us
+# to go SLOWER than the configured minimum, never faster.
+@app.middleware("http")
+async def set_request_interval(request: Request, call_next):
+    raw = request.headers.get("x-min-interval", "")
+    token = th.requested_interval.set(
+        th.clamp_interval(raw) if raw else th.DEFAULT_INTERVAL)
+    try:
+        return await call_next(request)
+    finally:
+        th.requested_interval.reset(token)
+
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     # request.url.path is the path only (no query string), so a param like
@@ -130,9 +143,17 @@ async def require_api_key(request: Request, call_next):
 
 def _fail(err: IGError):
     code = err.status if err.status in (401, 403, 404, 429) else 500
+    headers = {}
+    if code == 429:
+        # Tell the client how long we've already decided to stay quiet, so it
+        # doesn't immediately retry into the same wall.
+        wait = th.throttle.status()["penalty_remaining"]
+        if wait:
+            headers["Retry-After"] = str(int(wait) + 1)
     return JSONResponse(
         status_code=code,
         content={"detail": err.detail, "exc_type": "IGError"},
+        headers=headers,
     )
 
 
@@ -153,10 +174,58 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-async def _graphql(path: str, doc_id: str, friendly: str, variables: dict):
-    """POST a GraphQL doc_id query from the logged-in page. Instagram's
-    GraphQL endpoints reject the request (HTML shell) without fb_dtsg + lsd,
-    which we read out of the page."""
+# Instagram rejects a retired doc_id with a generic non-JSON envelope
+# (for (;;);{"__ar":1,"error":1357004,...}) rather than a clean GraphQL error,
+# so a rotation is indistinguishable from "something went wrong" by content.
+# We treat any of these as "maybe the id is stale" and relearn once.
+_STALE_ID_MARKERS = ("non-JSON response", "1357004", "doc_id")
+
+
+def _looks_stale(e: IGError) -> bool:
+    return e.status == 400 or any(m in e.detail for m in _STALE_ID_MARKERS)
+
+
+async def _graphql(path: str, friendly: str, variables: dict):
+    """POST a persisted GraphQL query from the logged-in page.
+
+    The doc_id is resolved by friendly name at call time. If Instagram
+    rejects the call in a way that smells like a retired id, we rediscover
+    from the live page and retry once with the fresh id.
+    """
+    doc_id = await docids.resolve(friendly)
+    try:
+        return await _post_graphql(path, doc_id, friendly, variables)
+    except IGError as e:
+        if not _looks_stale(e) or not browser.ready:
+            raise
+        fresh = await _relearn(friendly)
+        if not fresh or fresh == doc_id:
+            raise
+        print(f"retrying {friendly} with relearned doc_id {fresh}")
+        return await _post_graphql(path, fresh, friendly, variables)
+
+
+async def _relearn(friendly: str) -> str:
+    """Rediscover doc_ids from the real page, honouring the cooldown.
+
+    Discovery is genuine account traffic (a page load), so a burst of failing
+    requests must never become a burst of navigations.
+    """
+    if docids.env_override(friendly):
+        return ""  # operator pinned it by hand; don't fight them
+    if not docids.discovery_allowed():
+        print(f"doc_id relearn skipped: cooldown "
+              f"{docids.cooldown_remaining()}s")
+        return ""
+    docids.mark_discovery()
+    await browser.discover_doc_ids()
+    return await docids.resolve(friendly)
+
+
+async def _post_graphql(path: str, doc_id: str, friendly: str,
+                        variables: dict):
+    """Instagram's GraphQL endpoints reject the request (HTML shell) without
+    fb_dtsg + lsd, which we read out of the page."""
     tokens = await browser.get_tokens()
     dtsg = tokens.get("dtsg", "")
     lsd = tokens.get("lsd", "")
@@ -218,6 +287,47 @@ async def health():
     )
 
 
+@app.get("/docids")
+async def get_docids():
+    """Which persisted-query ids we're currently sending, and why.
+
+    `source`: env = pinned in .env, learned = harvested from the live page,
+    builtin = the value shipped with this release. First stop when keyword
+    search or saved collections start failing.
+    """
+    return {"doc_ids": await docids.snapshot(),
+            "discovery_cooldown_remaining": docids.cooldown_remaining()}
+
+
+@app.get("/throttle")
+async def get_throttle():
+    """Current outbound pacing state.
+
+    `strikes`/`penalty_remaining` are non-zero when Instagram has pushed back
+    (429 or a login wall) and we're deliberately staying quiet.
+    """
+    return th.throttle.status()
+
+
+@app.post("/docids/refresh")
+async def refresh_docids(query: str = Query("reels"),
+                         force: bool = Query(False)):
+    """Force a doc_id discovery pass (loads one real search page).
+
+    Normally unnecessary - a failing GraphQL call relearns on its own. `force`
+    bypasses the cooldown; use it sparingly, it's traffic on the account.
+    """
+    if not browser.ready:
+        raise HTTPException(status_code=503, detail="browser not ready")
+    if not force and not docids.discovery_allowed():
+        raise HTTPException(
+            status_code=429,
+            detail=f"cooldown: {docids.cooldown_remaining()}s remaining")
+    docids.mark_discovery()
+    seen = await browser.discover_doc_ids(query)
+    return {"discovered": seen, "doc_ids": await docids.snapshot()}
+
+
 @app.get("/following")
 async def following(cursor: str = Query("")):
     # The logged-in account's "following" list (one page). The plugin paginates
@@ -262,16 +372,14 @@ async def search_reels(
     try:
         sid = session_id or str(uuid.uuid4())
         if cursor:
-            doc_id = DOC_ID_SEARCH_PAGE
-            friendly = "PolarisKeywordSearchExplorePageRelayPaginationQuery"
+            friendly = docids.SEARCH_PAGE
             variables = {"after": cursor, "first": 24, "query": query,
                          "search_session_id": sid, "serp_session_id": sid}
         else:
-            doc_id = DOC_ID_SEARCH
-            friendly = "PolarisKeywordSearchExplorePageRelayQuery"
+            friendly = docids.SEARCH
             variables = {"query": query,
                          "search_session_id": sid, "serp_session_id": sid}
-        resp = await _graphql("/api/graphql", doc_id, friendly, variables)
+        resp = await _graphql("/api/graphql", friendly, variables)
         return N.norm_keyword_search_page(resp)
     except IGError as e:
         return _fail(e)
@@ -287,9 +395,7 @@ async def saved_collections():
             "count": 50,
             "get_cover_media_lists": True,
         }
-        resp = await _graphql(
-            "/graphql/query", DOC_ID_SAVED_COLLECTIONS,
-            "PolarisProfileSavedTabContentQuery", variables)
+        resp = await _graphql("/graphql/query", docids.SAVED, variables)
         return N.norm_collections(resp)
     except IGError as e:
         return _fail(e)

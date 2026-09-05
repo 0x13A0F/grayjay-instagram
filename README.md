@@ -65,6 +65,12 @@ from git (no shell access needed) — in
   channel) are served from Redis instead of hitting Instagram again, which
   keeps navigation snappy and rate-limits away. The **"Cache duration"**
   plugin setting controls it (Off / 1 / 3 / 5 / 10 minutes).
+- **Request pacing** — the backend enforces a minimum gap between outbound
+  Instagram calls (with jitter), and backs off automatically when Instagram
+  pushes back. Instagram flags accounts on request *bursts*, so this is
+  mandatory, not optional: the **"Request spacing"** plugin setting (Fast 1s /
+  Normal 2s / Careful 4s / Very careful 8s) can only ask the backend to go
+  *slower* than its own floor.
 - **Import subscriptions** — in Grayjay, open the Instagram source's detail
   page and tap **Login** (that's the noVNC login above, opened in Grayjay's
   own webview), then **Import Subscriptions** pulls in the accounts you follow
@@ -84,4 +90,6 @@ Playlists* (browsing and searching them already works).
 
 > Heads-up: it runs on a single Instagram account. Heavy, rapid browsing can
 > temporarily rate-limit some endpoints (e.g. the reels feed); they recover
-> with a short rest.
+> with a short rest. If you see Instagram's "we suspect automated behaviour"
+> notice, raise **"Request spacing"** and give the account a day of normal
+> use.

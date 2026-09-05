@@ -60,6 +60,26 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CACHE_MAX_TTL=${CACHE_MAX_TTL:-600}
       - CACHE_DEFAULT_TTL=${CACHE_DEFAULT_TTL:-0}
+      # Outbound pacing (throttle.py). Instagram flags request BURSTS, so a
+      # minimum gap between real Instagram calls is enforced here; the
+      # plugin's "Request spacing" setting can only ask for a LARGER gap.
+      # Lower the floor at your own risk.
+      - IG_MIN_INTERVAL_FLOOR=${IG_MIN_INTERVAL_FLOOR:-1.0}
+      - IG_MIN_INTERVAL=${IG_MIN_INTERVAL:-2.0}
+      - IG_INTERVAL_JITTER=${IG_INTERVAL_JITTER:-0.25}
+      # Backoff after a 429 / login wall: doubles per consecutive hit.
+      - IG_BACKOFF_BASE=${IG_BACKOFF_BASE:-60}
+      - IG_BACKOFF_MAX=${IG_BACKOFF_MAX:-900}
+      # GraphQL persisted-query ids. Normally leave these EMPTY: the backend
+      # learns them from the live page and relearns automatically when
+      # Instagram rotates them. Set one only to pin an id by hand.
+      - IG_DOC_ID_SEARCH=${IG_DOC_ID_SEARCH:-}
+      - IG_DOC_ID_SEARCH_PAGE=${IG_DOC_ID_SEARCH_PAGE:-}
+      - IG_DOC_ID_SAVED=${IG_DOC_ID_SAVED:-}
+      # How long a learned id is cached, and the floor between two discovery
+      # passes (each one loads a real page on the account).
+      - IG_DOCID_TTL=${IG_DOCID_TTL:-1209600}
+      - IG_DOCID_DISCOVERY_COOLDOWN=${IG_DOCID_DISCOVERY_COOLDOWN:-900}
     depends_on:
       - redis
     shm_size: "1gb"            # headroom for the browser
