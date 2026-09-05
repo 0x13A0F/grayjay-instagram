@@ -1,95 +1,121 @@
-# Grayjay Instagram plugin
+<div align="center">
 
-A [Grayjay](https://grayjay.app) source for **Instagram** — a **home feed**
-(your timeline), search creators, browse & play their **Reels**, open your
-**saved collections** as playlists, and read **comments (with replies)** —
-with no Instagram credentials ever entered into Grayjay itself.
+<img src="plugin/icon.png" width="86" alt="">
 
-It's two pieces:
+# Instagram for Grayjay
 
-- **`plugin/`** — the Grayjay plugin (a thin JavaScript client).
-- **`backend/server/`** — a self-hosted backend that drives a real,
-  logged-in **[Camoufox](https://camoufox.com)** (stealth Firefox) browser
-  and exposes a small REST API. The browser profile *is* the session, so the
-  plugin needs no tokens — you log in once with your own account, through a
-  browser-based login UI (noVNC) baked into the backend and reachable from
-  Grayjay itself.
+**Your home feed, Reels, saved collections and comments — inside [Grayjay](https://grayjay.app).**
+No Instagram credentials are ever entered into Grayjay itself.
 
+[![Grayjay](https://img.shields.io/badge/Grayjay-plugin-1b1b1f?style=flat-square)](https://grayjay.app)
+[![Self-hosted](https://img.shields.io/badge/self--hosted-docker%20compose-2496ed?style=flat-square&logo=docker&logoColor=white)](docker-compose.yml)
+[![Camoufox](https://img.shields.io/badge/engine-Camoufox-ff6f00?style=flat-square&logo=firefoxbrowser&logoColor=white)](https://camoufox.com)
+[![License](https://img.shields.io/badge/license-GPL--3.0-4c1?style=flat-square)](LICENSE)
+
+<img src="docs/media/demo.gif" width="260" alt="Browsing Instagram Reels inside Grayjay">
+
+</div>
+
+---
+
+## How it works
+
+A self-hosted backend drives a **real, logged-in
+[Camoufox](https://camoufox.com)** (stealth Firefox). The browser profile *is*
+the session, so the plugin never handles tokens.
+
+```mermaid
+flowchart LR
+    A["📱 Grayjay<br/>plugin"] -->|REST + API key| B["🦊 Camoufox backend<br/>FastAPI"]
+    B <-->|cache| C[("Redis")]
+    B -->|in-page fetch<br/>real session| D["Instagram"]
 ```
-[Grayjay plugin] ──HTTP──> [Camoufox backend] ──logged-in browser──> [Instagram]
-```
 
-Why a real browser: Instagram aggressively flags the private mobile API.
-Driving an actual logged-in browser carries a genuine session/fingerprint and
-calls the same `/api/v1` endpoints the web app uses (via an in-page `fetch`).
+Instagram aggressively flags the private mobile API; a real browser carries a
+genuine session and fingerprint, and calls the same endpoints the web app does.
 
-## Setup
+## Features
 
-**One command, no manual login step.** Copy [.env.example](.env.example) to
-`.env` (repo root) and fill it in, then:
+| | |
+|---|---|
+| **Home feed** | Your logged-in timeline. Videos only — photos and carousels are filtered out. |
+| **Search** | Keyword **Reel** search, **creator** search, channel browse & subscribe. |
+| **Reels** | Playback, comments, and **reply threads** on demand. |
+| **Saved collections** | Appear in Grayjay's *Playlists* (plus "All saved reels") and play like any other. |
+| **Import subscriptions** | Pulls the accounts you follow in as Grayjay subscriptions. |
+| **Phone-only login** | Grayjay's **Login** button opens the backend's browser over noVNC — no laptop after deploying. |
+| **Response cache** | Redis absorbs repeat requests: instant navigation, less traffic to Instagram. |
+| **Request pacing** | Enforced spacing + jitter between Instagram calls, with backoff on rate-limits. |
+
+Posting and following are out of scope.
+
+## Preview
+
+| Home feed | Saved collections | Login from the phone |
+|:--:|:--:|:--:|
+| <img src="docs/media/home-feed.gif" width="200" alt="Home feed"> | <img src="docs/media/playlists.gif" width="200" alt="Saved collections as playlists"> | <img src="docs/media/login.gif" width="200" alt="Logging in through Grayjay's webview"> |
+
+## Install
+
+**1. Deploy.** Copy [`.env.example`](.env.example) to `.env`, fill it in, then:
+
 ```bash
 docker compose up -d --build
 ```
-This builds and runs **both** pieces — the backend (`:8000`, plus a **noVNC**
-login UI on `:6080`) and the plugin server (`:8080`). Open
-`http://<host>:8080/` and **scan the QR code** in Grayjay (or load
-`InstagramConfig.json` from that same URL directly):
 
-<img src="plugin/qrcode_example.png" alt="Plugin install page with a scannable QR code" width="320">
+Runs the backend (`:8000`), the noVNC login UI (`:6080`), Redis, and a plugin
+server (`:8080`).
 
-Then log in to Instagram **once**, either way:
+**2. Add the plugin.** Open `http://<host>:8080/` and scan the QR code.
 
-- **Phone only** — tap **Login** on the Instagram source in Grayjay. Its login
-  webview opens the backend's real browser over noVNC; log in there and the
-  screen closes itself once the session lands. Nothing else is needed.
-- **From a computer** — open `http://<host>:6080/vnc.html` and log in there.
+<div align="center">
+<img src="plugin/qrcode_example.png" width="260" alt="Plugin install page with a scannable QR code">
+</div>
 
-Either way the backend auto-detects the session and starts serving.
+**3. Log in, once.** Tap **Login** on the source in Grayjay — its webview opens
+the backend's browser and closes itself once the session lands — or use
+`http://<host>:6080/vnc.html` from a computer. Serving starts automatically.
 
-Full details — including deploying on [Dokploy](https://dokploy.com) straight
-from git (no shell access needed) — in
-[backend/server/README.md](backend/server/README.md).
+> Deploying on [Dokploy](https://dokploy.com) straight from git, signing the
+> plugin, and every environment variable are covered in
+> **[backend/server/README.md](backend/server/README.md)**.
 
-## Scope
-- **Home feed** — your logged-in timeline (videos only; photos/carousels are
-  filtered out since the plugin plays video).
-- **Search** — keyword **reel search** (Grayjay's search bar) and **creator
-  search**; plus **channel browse** + subscribe (Grayjay-local).
-- **Reels/videos** playback.
-- **Saved playlists** — your Instagram **saved collections** show up in
-  Grayjay's *Playlists* search (plus an "All saved reels" entry) and play like
-  any other playlist.
-- **Comments**, including **replies** — reply *previews* come free; full reply
-  threads are fetched on demand behind the **"Load comment replies"** setting.
-- **Response cache** — repeated requests (flipping between pages, re-opening a
-  channel) are served from Redis instead of hitting Instagram again, which
-  keeps navigation snappy and rate-limits away. The **"Cache duration"**
-  plugin setting controls it (Off / 1 / 3 / 5 / 10 minutes).
-- **Request pacing** — the backend enforces a minimum gap between outbound
-  Instagram calls (with jitter), and backs off automatically when Instagram
-  pushes back. Instagram flags accounts on request *bursts*, so this is
-  mandatory, not optional: the **"Request spacing"** plugin setting (Fast 1s /
-  Normal 2s / Careful 4s / Very careful 8s) can only ask the backend to go
-  *slower* than its own floor.
-- **Import subscriptions** — in Grayjay, open the Instagram source's detail
-  page and tap **Login** (that's the noVNC login above, opened in Grayjay's
-  own webview), then **Import Subscriptions** pulls in the accounts you follow
-  as Grayjay subscriptions.
+## Settings
 
-Posting/following on Instagram's side are out of scope.
+| Setting | What it does | Default |
+|---|---|---|
+| **Request spacing** | Minimum gap between real Instagram calls: `Fast 1s` / `Normal 2s` / `Careful 4s` / `Very careful 8s`. Can only ask the backend to go *slower* than its own floor. | Normal |
+| **Cache duration** | How long the backend caches a response: `Off` / `1` / `3` / `5` / `10` min. | 3 min |
+| **Load comment replies** | Fetch full reply threads on demand (one extra request each). Off = only the previews Instagram includes for free. | Off |
+
+## Staying unflagged
+
+It runs on **one** account, so the backend behaves like a person, not a scraper:
+
+- **Pacing is server-side and jittered** — Instagram flags request *bursts*,
+  not volume. A 429 or login wall triggers exponential backoff.
+- **Pagers stop instead of spinning** — a page with no videos ends the pager
+  instead of making Grayjay chase cursors forever.
+- **GraphQL query ids self-heal** — Instagram retires them on every web
+  release; the backend relearns them from the live page.
+
+Seeing *"we suspect automated behaviour"*? Raise **Request spacing** and give
+the account a day of ordinary use.
 
 ## Layout
+
 ```
 plugin/          Grayjay plugin (InstagramConfig.json + InstagramScript.js)
-backend/server/  Camoufox + FastAPI backend (app.py, browser.py, …)
+backend/server/  Camoufox + FastAPI backend (app.py, browser.py, throttle.py, …)
+backend/tests/   unit tests — no browser, network or Redis needed
+docs/media/      screen recordings used above
 ```
 
-## Roadmap
-Planned next: **importing** your saved collections through Grayjay's *Import
-Playlists* (browsing and searching them already works).
+Tests: `cd backend && PYTHONPATH=server python3 -m tests.test_throttle`
+(also `test_docids`, `test_normalize`, `test_shortcode`) and
+`node plugin/test_pagers.js`.
 
-> Heads-up: it runs on a single Instagram account. Heavy, rapid browsing can
-> temporarily rate-limit some endpoints (e.g. the reels feed); they recover
-> with a short rest. If you see Instagram's "we suspect automated behaviour"
-> notice, raise **"Request spacing"** and give the account a day of normal
-> use.
+## Roadmap
+
+**Importing** saved collections through Grayjay's *Import Playlists* (browsing
+and searching them already works).

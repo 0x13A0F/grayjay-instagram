@@ -12,7 +12,7 @@ Routes:
   GET /media/comments/replies?media_id=&comment_id=&cursor=
   GET /following?cursor=                          (logged-in account's follows)
   GET /docids  |  POST /docids/refresh            (GraphQL query-id registry)
-  GET /throttle                                   (outbound pacing state)
+  GET /throttle | POST /throttle/reset             (outbound pacing state)
 """
 
 import normalize as N
@@ -147,7 +147,8 @@ def _fail(err: IGError):
     if code == 429:
         # Tell the client how long we've already decided to stay quiet, so it
         # doesn't immediately retry into the same wall.
-        wait = th.throttle.status()["penalty_remaining"]
+        wait = getattr(err, "retry_after", 0.0) or \
+            th.throttle.status()["penalty_remaining"]
         if wait:
             headers["Retry-After"] = str(int(wait) + 1)
     return JSONResponse(
@@ -306,6 +307,18 @@ async def get_throttle():
     `strikes`/`penalty_remaining` are non-zero when Instagram has pushed back
     (429 or a login wall) and we're deliberately staying quiet.
     """
+    return th.throttle.status()
+
+
+@app.post("/throttle/reset")
+async def reset_throttle():
+    """Clear a rate-limit backoff window.
+
+    Escape hatch for when the backoff is longer than you want to wait and you
+    believe Instagram has cooled off - it does NOT make Instagram forget.
+    Normal pacing still applies.
+    """
+    th.throttle.clear()
     return th.throttle.status()
 
 

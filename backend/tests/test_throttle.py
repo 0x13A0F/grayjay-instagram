@@ -175,7 +175,9 @@ def test_backoff():
     check("and is capped", [t.penalize() for _ in range(10)][-1] == 900.0)
 
     clock.slept.clear()
-    run(t.wait(2.0))
+    # A caller willing to wait (max_wait) serves the penalty; the default
+    # budget refuses instead - see test_never_parks_a_request.
+    run(t.wait(2.0, max_wait=10000))
     check("the next call serves the penalty, not the interval",
           clock.slept and clock.slept[0] > 60.0)
     check("penalty is reported", t.status()["penalty_remaining"] >= 0)
@@ -185,6 +187,122 @@ def test_backoff():
     check("success decays the penalty entirely",
           t.status()["strikes"] == 0
           and t.status()["penalty_remaining"] == 0)
+
+
+def test_never_parks_a_request():
+    """A backoff must answer 429 fast, not hold the connection open.
+
+    Regression: wait() slept for the whole penalty (up to 15 min) while
+    holding the browser lock, so every request hung until the client gave up
+    - Grayjay reported "backend request failed (408)" for anything at all.
+    """
+    print("fail fast instead of parking")
+    clock = with_fake_clock()
+    th.JITTER = 0.0
+    th.MAX_WAIT = 15.0
+    th.BACKOFF_BASE = 60.0
+    t = th.Throttle()
+    run(t.wait(2.0))
+
+    t.penalize()  # 60s window - far longer than a request may wait
+    clock.slept.clear()
+    raised = None
+    try:
+        run(t.wait(2.0))
+    except th.RateLimited as e:
+        raised = e
+    check("a long backoff raises instead of sleeping", raised is not None)
+    check("nothing was slept", clock.slept == [])
+    check("it reports how long to wait", raised.retry_after > 15.0)
+
+    # The rejected call must not consume the pacing slot.
+    before = t._last
+    try:
+        run(t.wait(2.0))
+    except th.RateLimited:
+        pass
+    check("a rejected call doesn't consume the slot", t._last == before)
+
+    # Ordinary pacing is well under the budget and still just waits.
+    t.clear()
+    clock.slept.clear()
+    run(t.wait(2.0))
+    check("normal spacing still waits rather than failing",
+          clock.slept == [2.0])
+
+    # The escape hatch.
+    t.penalize()
+    t.clear()
+    clock.slept.clear()
+    run(t.wait(2.0))
+    check("clear() lifts the penalty", clock.slept == [2.0])
+    check("and resets the strike count", t.status()["strikes"] == 0)
+
+    # A caller may raise its own budget (e.g. a background job).
+    t.penalize()
+    clock.slept.clear()
+    run(t.wait(2.0, max_wait=10000))
+    check("a generous budget still waits it out", clock.slept[0] > 30.0)
+
+
+def test_backoff_surfaces_as_429():
+    """End to end: a backoff window must reach the client as 429."""
+    try:
+        import httpx
+        import app
+        from browser import IGError
+    except ImportError as e:
+        print("429 plumbing SKIPPED (%s)" % e)
+        return
+    print("backoff surfaces as 429")
+    import browser as br
+
+    real = br.throttle
+    paced = th.Throttle()
+    br.throttle = paced
+    try:
+        paced.penalize()
+
+        class FakeBrowser(br.IGBrowser):
+            def __init__(self):
+                super().__init__()
+                self.ready = True
+                self.page = object()
+
+            async def _evaluate(self, *a):
+                raise AssertionError("Instagram must not be called")
+
+        fake = FakeBrowser()
+
+        async def go():
+            # ig_fetch_raw refuses before it ever touches the page.
+            try:
+                await fake.ig_fetch_raw("/api/v1/x")
+            except IGError as e:
+                return e
+            return None
+        err = run(go())
+        check("a paced call fails fast", err is not None and err.status == 429)
+        check("with a retry hint", err.retry_after > 0)
+
+        # ...and the route turns that into a 429 + Retry-After.
+        class Refusing:
+            ready = True
+
+            async def ig_fetch(self, *a, **k):
+                raise IGError(429, "backing off", retry_after=42.0)
+        app.browser = Refusing()
+
+        async def call():
+            tr = httpx.ASGITransport(app=app.app)
+            async with httpx.AsyncClient(transport=tr,
+                                         base_url="http://t") as c:
+                return await c.get("/search/users?query=x")
+        resp = run(call())
+        check("the route answers 429", resp.status_code == 429)
+        check("with Retry-After", resp.headers.get("retry-after") == "43")
+    finally:
+        br.throttle = real
 
 
 def test_header_reaches_the_browser():
@@ -238,5 +356,7 @@ if __name__ == "__main__":
     test_floor_is_mandatory()
     test_jitter()
     test_backoff()
+    test_never_parks_a_request()
+    test_backoff_surfaces_as_429()
     test_header_reaches_the_browser()
     print("\n%d checks passed" % passed)

@@ -162,10 +162,11 @@ console.log("request spacing");
 
 console.log("rate-limit handling");
 {
-    const s = makeSandbox(() => ({ isOk: false, code: 429, body: "rate limited" }));
+    const s = makeSandbox(() => ({ isOk: false, code: 429, body: '{"detail":"backing off after a rate-limit; retry in 58s"}' }));
     let threw = null;
     try { s.source.getHome(); } catch (e) { threw = e; }
     check("a 429 is never retried", s.requests.length === 1);
+    check("the remaining cooldown is surfaced", /Retry in about 58s/.test(threw.message));
     // Home/search swallow transient errors into an empty pager; a rate-limit
     // must NOT be hidden that way, or the user just sees a blank feed and
     // keeps pulling to refresh - making it worse.

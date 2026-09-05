@@ -38,6 +38,13 @@ JITTER = float(os.getenv("IG_INTERVAL_JITTER", "0.25"))
 BACKOFF_BASE = float(os.getenv("IG_BACKOFF_BASE", "60.0"))
 BACKOFF_MAX = float(os.getenv("IG_BACKOFF_MAX", "900.0"))
 
+# Longest we'll hold a client's request open while pacing. Beyond this we
+# answer 429 + Retry-After instead of parking the connection: a backoff can
+# run for minutes, and an HTTP client that waits that long just times out
+# (Grayjay reports a 408) - which tells the user nothing and, worse, wedges
+# every other request queued behind it.
+MAX_WAIT = float(os.getenv("IG_MAX_WAIT", "15.0"))
+
 
 # Set per request by the API middleware from the plugin's X-Min-Interval
 # header, so browser.py can pace a call without the interval being threaded
@@ -57,6 +64,14 @@ def clamp_interval(seconds) -> float:
     return max(MIN_INTERVAL_FLOOR, min(value, MAX_INTERVAL))
 
 
+class RateLimited(Exception):
+    """We're pacing/backing off for longer than a request can politely wait."""
+
+    def __init__(self, retry_after: float):
+        super().__init__(f"throttled; retry in {retry_after:.0f}s")
+        self.retry_after = retry_after
+
+
 class Throttle:
     def __init__(self):
         self._lock = asyncio.Lock()
@@ -64,20 +79,31 @@ class Throttle:
         self._penalty_until = 0.0
         self._strikes = 0
 
-    async def wait(self, interval=None) -> float:
+    async def wait(self, interval=None, max_wait=None) -> float:
         """Block until it's polite to make the next Instagram call.
 
         Returns how long we waited (for logging). Serialized on its own lock
         so concurrent callers queue up instead of all reading a stale
         timestamp and firing at once.
+
+        Raises RateLimited if the required delay is longer than `max_wait`
+        (default MAX_WAIT) - i.e. we're in a backoff window. The caller
+        should answer 429 rather than hold the connection open: parking a
+        request for minutes just turns into a client-side timeout, and it
+        blocks every request queued behind it too.
         """
         gap = clamp_interval(
             DEFAULT_INTERVAL if interval is None else interval)
+        budget = MAX_WAIT if max_wait is None else max_wait
         async with self._lock:
             now = time.monotonic()
             spacing = gap * (1.0 + random.uniform(-JITTER, JITTER))
             ready_at = max(self._last + spacing, self._penalty_until)
             delay = ready_at - now
+            if delay > budget:
+                # Don't consume the slot: `_last` stays put so a request that
+                # arrives once the window clears isn't penalised for this one.
+                raise RateLimited(delay)
             if delay > 0:
                 if self._penalty_until > now:
                     print(f"throttle: backing off {delay:.1f}s "
@@ -102,6 +128,12 @@ class Throttle:
             self._strikes -= 1
             if not self._strikes:
                 self._penalty_until = 0.0
+
+    def clear(self) -> None:
+        """Drop the penalty window (operator escape hatch)."""
+        self._strikes = 0
+        self._penalty_until = 0.0
+        print("throttle: penalty cleared")
 
     def status(self) -> dict:
         remaining = max(0.0, self._penalty_until - time.monotonic())

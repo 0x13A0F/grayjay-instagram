@@ -37,10 +37,20 @@ source.saveState = function () { return ""; };
 // errors and fall back to an empty pager, which would silently hide this -
 // the one error the user most needs to see - so they re-throw on this exact
 // message (see isRateLimit).
-const RATE_LIMIT_MSG = "Instagram is rate-limiting this account - the backend is backing off. Wait a minute, then try again; if it keeps happening, raise \"Request spacing\" in the plugin settings.";
+const RATE_LIMIT_MSG = "Instagram is rate-limiting this account - the backend is backing off.";
+const RATE_LIMIT_HINT = " Try again shortly; if it keeps happening, raise \"Request spacing\" in the plugin settings.";
+
+// The backend answers 429 immediately (rather than holding the request open,
+// which just becomes a client-side timeout) and puts the remaining cooldown
+// in the body: "...; retry in 58s". Surface that so the wait is knowable.
+function rateLimitMessage(body) {
+    const m = /retry in (\d+)s/.exec(body || "");
+    const wait = m ? " Retry in about " + m[1] + "s." : "";
+    return RATE_LIMIT_MSG + wait + RATE_LIMIT_HINT;
+}
 
 function isRateLimit(e) {
-    return !!e && e.message === RATE_LIMIT_MSG;
+    return !!e && typeof e.message === "string" && e.message.indexOf(RATE_LIMIT_MSG) === 0;
 }
 
 function apiGet(path, params) {
@@ -83,7 +93,7 @@ function apiGet(path, params) {
         if (resp.code === 429) {
             // Instagram rate-limited us and the backend is already sitting
             // out a cooldown. Retrying now only deepens it.
-            throw new ScriptException(RATE_LIMIT_MSG);
+            throw new ScriptException(rateLimitMessage(resp.body));
         }
 
         if (resp.code === 401 || resp.code === 403) {

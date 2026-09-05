@@ -245,9 +245,16 @@ outbound calls itself, in `throttle.py`:
 - Pacing is **outbound only**: cache hits never reach it, so repeat browsing
   stays instant.
 
-`GET /throttle` reports the current state (`strikes`, `penalty_remaining`).
-A 429 response carries `Retry-After` so the plugin doesn't retry into the
-same wall — and the plugin never retries a 429 at all.
+- **Requests are never parked.** Pacing waits at most `IG_MAX_WAIT` (15s)
+  inside a request; if the wait would be longer — which is exactly what a
+  backoff window means — the backend answers `429` + `Retry-After`
+  immediately. Holding the connection instead just turns into a client-side
+  timeout (Grayjay reports a `408`) and blocks everything queued behind it.
+
+`GET /throttle` reports the current state (`strikes`, `penalty_remaining`);
+`POST /throttle/reset` clears a backoff window when you believe Instagram has
+cooled off (normal pacing still applies — it doesn't make Instagram forget).
+The plugin never retries a 429, and shows the remaining cooldown.
 
 ## GraphQL doc_ids
 

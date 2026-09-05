@@ -70,6 +70,9 @@ services:
       # Backoff after a 429 / login wall: doubles per consecutive hit.
       - IG_BACKOFF_BASE=${IG_BACKOFF_BASE:-60}
       - IG_BACKOFF_MAX=${IG_BACKOFF_MAX:-900}
+      # Longest a request is held open while pacing. Past this the backend
+      # answers 429 + Retry-After instead of letting the client time out.
+      - IG_MAX_WAIT=${IG_MAX_WAIT:-15}
       # GraphQL persisted-query ids. Normally leave these EMPTY: the backend
       # learns them from the live page and relearns automatically when
       # Instagram rotates them. Set one only to pin an id by hand.

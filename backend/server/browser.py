@@ -19,7 +19,7 @@ from camoufox.async_api import AsyncCamoufox
 
 import docids
 from fingerprint import fingerprint_kwargs
-from throttle import throttle
+from throttle import RateLimited, throttle
 from utils import clip_text
 
 IG_DOMAIN = "https://www.instagram.com"
@@ -398,7 +398,16 @@ class IGBrowser:
             # Instagram calls. Cache hits never get here, so repeat browsing
             # stays instant; only real outbound traffic is spaced.
             from throttle import requested_interval
-            await throttle.wait(requested_interval.get())
+            try:
+                await throttle.wait(requested_interval.get())
+            except RateLimited as e:
+                # We're in a backoff window. Answer immediately instead of
+                # holding the request (and this lock) open for minutes.
+                raise IGError(
+                    429,
+                    f"backing off after a rate-limit; retry in "
+                    f"{e.retry_after:.0f}s",
+                    retry_after=e.retry_after) from None
             try:
                 result = await self.page.evaluate(FETCH_JS_CODE, req)
             except Exception as e:
@@ -450,10 +459,11 @@ class IGBrowser:
 
 
 class IGError(Exception):
-    def __init__(self, status: int, detail: str):
+    def __init__(self, status: int, detail: str, retry_after: float = 0.0):
         super().__init__(f"IG {status}: {detail}")
         self.status = status
         self.detail = detail
+        self.retry_after = retry_after
 
 
 def _is_query_rejection(text: str) -> bool:
